@@ -1,0 +1,40 @@
+{
+  "ai": {
+    "backend": "agy",
+    "model": "gemini-3.8-flash-high",
+    "effort": "high",
+    "timeout_seconds": 1500,
+    "compact_threshold": 0.65,
+    "compact_idle_seconds": 600,
+    "auto_upgrade": {
+      "enabled": true,
+      "series": "flash",
+      "effort": "high",
+      "check_interval_seconds": 86400
+    }
+  },
+  "discord": {
+    "token": "YOUR_DISCORD_BOT_TOKEN_HERE",
+    "allowed_user_ids": [],
+    "allowed_guild_ids": [],
+    "allowed_channel_ids": [],
+    "allow_dms": true,
+    "bot_name": "Oracle",
+    "edit_interval": 5,
+    "max_message_chunks": 4
+  },
+  "anthropic": {
+    "api_key": "",
+    "model": "claude-sonnet-4-6",
+    "max_tokens": 4096,
+    "extraction_model": "claude-haiku-4-5-20251001"
+  },
+  "kb": {
+    "base_dir": "/home/tm9k1/.ai",
+    "max_context_chars": 20000,
+    "max_retrieval_results": 8,
+    "history_turns": 20,
+    "stale_threshold_days": 7,
+    "resume_max_age_minutes": 30
+  }
+}

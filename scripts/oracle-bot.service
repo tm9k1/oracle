@@ -1,0 +1,18 @@
+[Unit]
+Description=Oracle Discord Bot (modular AI backend: agy / claude-cli)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tm9k1/.ai
+EnvironmentFile=-/home/tm9k1/.ai/.env
+Environment="PATH=/home/tm9k1/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/tm9k1/.ai/.venv/bin/python /home/tm9k1/.ai/scripts/oracle_bot.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/tm9k1/.ai/logs/oracle_bot.log
+StandardError=append:/home/tm9k1/.ai/logs/oracle_bot.log
+
+[Install]
+WantedBy=default.target

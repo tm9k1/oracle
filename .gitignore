@@ -1,0 +1,28 @@
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+
+# Secrets & Environment (CRITICAL)
+.env
+.env.*
+*.pem
+*.key
+
+# Runtime Data, Logs & State
+sessions.json
+sessions/
+curiosity_state.json
+last_changes.txt
+logs/
+*.log
+downloads/
+.openclaw/
+
+# System / OS
+.DS_Store
+*.bak
+*.swp

@@ -1,0 +1,19 @@
+[Unit]
+Description=Oracle — Personal AI Discord Bot (OpenClaw)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tm9k1
+EnvironmentFile=/home/tm9k1/.ai/.env
+Environment="NVM_DIR=/home/tm9k1/.nvm"
+Environment="PATH=/home/tm9k1/.nvm/versions/node/v24.17.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/tm9k1/.nvm/versions/node/v24.17.0/bin/openclaw gateway start
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/tm9k1/.ai/logs/oracle.log
+StandardError=append:/home/tm9k1/.ai/logs/oracle.log
+
+[Install]
+WantedBy=multi-user.target
