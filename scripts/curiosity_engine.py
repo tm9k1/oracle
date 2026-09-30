@@ -157,7 +157,7 @@ class DominionSurveyor:
             open_q_match = re.search(r"##\s*Open questions?(.*?)(?:\n##|\Z)", content, re.DOTALL | re.IGNORECASE)
             if open_q_match:
                 section_text = open_q_match.group(1).strip()
-                raw_bullets = re.findall(r"^[*-]\s*(.+)$", section_text, re.MULTILINE)
+                raw_bullets = self._extract_bullets(section_text)
                 for bullet in raw_bullets:
                     bullet_clean = clean_markdown_links(bullet.strip())
                     bullet_lower = bullet_clean.lower()
@@ -194,6 +194,28 @@ class DominionSurveyor:
 
         return questions
 
+    def _extract_bullets(self, text: str) -> List[str]:
+        """Extract multi-line markdown bullets cleanly without splitting mid-sentence."""
+        bullets = []
+        current_bullet: List[str] = []
+        for line in text.splitlines():
+            line_str = line.strip()
+            m = re.match(r"^[*-]\s+(.+)$", line)
+            if m:
+                if current_bullet:
+                    bullets.append(" ".join(current_bullet).strip())
+                current_bullet = [m.group(1).strip()]
+            elif current_bullet and (line.startswith("  ") or line.startswith("\t")):
+                current_bullet.append(line_str)
+            elif current_bullet and not line_str:
+                continue
+            elif current_bullet:
+                bullets.append(" ".join(current_bullet).strip())
+                current_bullet = []
+        if current_bullet:
+            bullets.append(" ".join(current_bullet).strip())
+        return bullets
+
     def _extract_title(self, content: str) -> Optional[str]:
         m_yaml = re.search(r"^title:\s*[\"']?(.*?)[\"']?$", content, re.MULTILINE)
         if m_yaml:
@@ -208,16 +230,72 @@ class DominionSurveyor:
         qid = f"openq-{entity_id}-{slug}"
         clean_title = clean_markdown_links(title)
 
-        if bullet.endswith("?"):
-            return f"Regarding {clean_title}: {bullet}", qid
+        b_lower = bullet.lower()
+        if "other details — not recorded" in b_lower or "details not recorded" in b_lower:
+            return f"Quick check on {clean_title}: what is its current status or primary role right now?", f"sparse-{entity_id}"
 
-        b_clean = bullet.rstrip(".")
-        if "other details — not recorded" in bullet.lower():
-            return f"Dominion currently has limited details on {clean_title}. Could you share a bit more about what's new with {clean_title}?", f"sparse-{entity_id}"
-        elif "whether" in bullet.lower():
-            return f"Regarding {clean_title}, Dominion has an open question: {b_clean}. What is the current status?", qid
+        # Extract bold topic prefix if present (e.g. **UPS load:** ...)
+        prefix = ""
+        prefix_match = re.match(r"^\*\*([^*:]+):?\*\*:?\s*(.+)$", bullet)
+        if prefix_match:
+            prefix = prefix_match.group(1).strip()
+            body = prefix_match.group(2).strip()
         else:
-            return f"Regarding {clean_title}, Dominion notes: '{b_clean}'. Could you shed some light on this?", qid
+            body = bullet
+
+        body_clean = clean_markdown_links(body.rstrip("."))
+        body_lower = body.lower()
+
+        # Decision fork: accept or size up
+        if "accept, or size up" in body_lower or "accept or size up" in body_lower:
+            target = f" ({prefix})" if prefix else ""
+            return (
+                f"For {clean_title}{target}: are you leaning towards accepting the shorter runtime, or sizing up to a second UPS?",
+                qid,
+            )
+
+        # RAM / sizing decision: 16 → 32 GB
+        arrow_match = re.search(r"(\d+\s*GB)\s*(?:→|->)\s*(\d+\s*GB)", body, re.IGNORECASE)
+        if arrow_match:
+            opt1, opt2 = arrow_match.group(1), arrow_match.group(2)
+            target = f" ({prefix})" if prefix else ""
+            return (
+                f"For {clean_title}{target}: did you decide to stick with {opt1}, or bump it to {opt2}?",
+                qid,
+            )
+
+        # Timeline sequencing vs event (e.g. wedding)
+        if "timeline" in body_lower and "wedding" in body_lower:
+            return (
+                f"For {clean_title}: are you planning this build for before the wedding, or holding off until after?",
+                qid,
+            )
+
+        # Budget / plan mapping
+        if "still maps to" in body_lower or ("budget" in body_lower and "map" in body_lower):
+            return (
+                f"For {clean_title}: does the budget line map to this machine, or was it shifted to another build?",
+                qid,
+            )
+
+        # 'Whether' decisions
+        whether_match = re.search(r"whether\s+(.+)$", body, re.IGNORECASE)
+        if whether_match:
+            sub = clean_markdown_links(whether_match.group(1).rstrip("."))
+            if " or " in sub:
+                return f"For {clean_title}: regarding {sub} — which way are you leaning?", qid
+            return f"Quick check on {clean_title}: did you decide on whether {sub}, or is that still TBD?", qid
+
+        # Already phrased as a question
+        if bullet.endswith("?"):
+            return f"Regarding {clean_title}: {bullet.rstrip('?')}?", qid
+
+        # Topic prefix present
+        if prefix:
+            return f"For {clean_title} ({prefix}): is this an active decision right now, or resolved?", qid
+
+        # Concise binary status check fallback
+        return f"For {clean_title}: is \"{body_clean}\" still an open item, or has it already been sorted out?", qid
 
     def _entity_specific_probes(self, entity_id: str, title: str, content: str) -> List[CuriosityQuestion]:
         """Targeted inquiries for key entities."""
