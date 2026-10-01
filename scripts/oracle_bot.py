@@ -224,29 +224,38 @@ def _status_text(text: str) -> str:
 
 class _LazyStatus:
     """A status message that isn't sent until there's real content to show.
-    First `set()` sends; subsequent calls edit."""
+    First `set()` sends; subsequent calls edit.
+    Uses an internal async lock to prevent race conditions between background streaming updates
+    and final turn completion."""
 
     def __init__(self, channel):
         self.channel = channel
         self.msg: Optional[discord.Message] = None
+        self._lock = asyncio.Lock()
 
     async def set(self, content: str, files: Optional[list[discord.File]] = None):
         if not content and not files:
             return self.msg
-        if self.msg is None:
-            if files:
-                self.msg = await self.channel.send(content or None, files=files)
-            else:
-                self.msg = await self.channel.send(content)
-        else:
-            if files:
-                try:
-                    await self.msg.edit(content=content or None, attachments=files)
-                except Exception as e:
-                    log.warning("Failed to edit with attachments (%s); sending as separate message", e)
+        async with self._lock:
+            if self.msg is None:
+                if files:
                     self.msg = await self.channel.send(content or None, files=files)
+                else:
+                    self.msg = await self.channel.send(content)
             else:
-                await self.msg.edit(content=content)
+                if files:
+                    try:
+                        await self.msg.edit(content=content or None, attachments=files)
+                    except Exception as e:
+                        log.warning("Failed to edit with attachments (%s); sending as separate message", e)
+                        self.msg = await self.channel.send(content or None, files=files)
+                else:
+                    if self.msg.content == content:
+                        return self.msg
+                    try:
+                        await self.msg.edit(content=content)
+                    except Exception as e:
+                        log.warning("Failed to edit message (%s)", e)
         return self.msg
 
 
