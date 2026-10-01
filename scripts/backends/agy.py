@@ -175,6 +175,7 @@ class AgyBackend(BaseAIBackend):
         on_text_delta: Optional[Callable[[str], Awaitable[None]]] = None,
         on_activity: Optional[Callable[[str], Awaitable[None]]] = None,
         periodic_status_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
+        _is_retry: bool = False,
     ) -> BackendResult:
         full_prompt = self._prepare_prompt(prompt, session_id, system_prompt)
         cmd = self._build_cmd(full_prompt, session_id, output_format="stream-json")
@@ -294,7 +295,8 @@ class AgyBackend(BaseAIBackend):
 
         if proc.returncode != 0:
             log.error("agy stream failed (exit %d): %s", proc.returncode, stderr[:400])
-            if session_id and ("not found" in stderr.lower() or "no conversation" in stderr.lower()):
+            err_lower = stderr.lower()
+            if session_id and ("not found" in err_lower or "no conversation" in err_lower):
                 log.warning("agy session %s not found, retrying fresh", session_id)
                 return await self.stream_turn(
                     prompt=prompt,
@@ -303,6 +305,24 @@ class AgyBackend(BaseAIBackend):
                     on_text_delta=on_text_delta,
                     on_activity=on_activity,
                     periodic_status_callback=periodic_status_callback,
+                )
+            is_transient = any(term in err_lower for term in (
+                "connection to the agent was interrupted",
+                "subscriber fell behind updates",
+                "broken pipe",
+                "connection reset",
+            ))
+            if session_id and is_transient and not _is_retry:
+                log.warning("Transient agy connection error on session %s, retrying once in 2s...", session_id)
+                await asyncio.sleep(2)
+                return await self.stream_turn(
+                    prompt=prompt,
+                    session_id=session_id,
+                    system_prompt=system_prompt,
+                    on_text_delta=on_text_delta,
+                    on_activity=on_activity,
+                    periodic_status_callback=periodic_status_callback,
+                    _is_retry=True,
                 )
             raise RuntimeError(f"agy exit {proc.returncode}: {stderr[:400]}")
 
