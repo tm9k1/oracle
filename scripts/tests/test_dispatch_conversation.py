@@ -58,6 +58,7 @@ class TestDispatchConversation(unittest.IsolatedAsyncioTestCase):
             m = MagicMock()
             m.id = len(sent_messages) + 1000
             m.content = content
+            m.author = oracle_bot.bot.user
             sent_messages.append(m)
             return m
 
@@ -72,12 +73,38 @@ class TestDispatchConversation(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Dominion Pending Dispatches", list_msg)
         self.assertIn("Contrite Witness", list_msg)
 
+        # Mock AI backend for synthesis and reply
+        mock_backend = MagicMock(spec=BaseAIBackend)
+        mock_backend.name = "agy (gemini-3.8-flash-high)"
+        mock_backend.run_turn = AsyncMock(
+            return_value=BackendResult(
+                result="Hey Piyush, checking in on the Contrite Witness setup — how has daily battery life and sync been holding up?",
+                session_id="sample-conv-sess-123",
+                usage={"total_tokens": 40}
+            )
+        )
+        mock_backend.stream_turn = AsyncMock(
+            return_value=BackendResult(
+                result=(
+                    "Glad to hear the S23 optimizations are holding up! "
+                    "The 7.5h SOT confirms disabling RAM Plus and background Wi-Fi scanning made a measurable difference. "
+                    "I will log this update into Dominion under contrite-witness."
+                ),
+                session_id="sample-conv-sess-123",
+                usage={"total_tokens": 150}
+            )
+        )
+        mock_backend.get_context_fraction.return_value = 0.1
+        mock_backend.mirror_session = MagicMock()
+
         # 2. Trigger dispatch delivery
-        with patch("oracle_bot.DispatchManager", return_value=self.manager):
+        with patch("oracle_bot.DispatchManager", return_value=self.manager), \
+             patch.object(oracle_bot, "ai_backend", mock_backend):
             await oracle_bot._handle_dispatch_command(mock_channel, "/dispatch send contrite")
 
         dispatch_msg = sent_messages[-1]
-        self.assertIn("Dominion Dispatch", dispatch_msg.content)
+        self.assertNotIn("Dominion Dispatch", dispatch_msg.content)
+        self.assertNotIn("[[", dispatch_msg.content)
         self.assertIn("Contrite Witness", dispatch_msg.content)
         self.assertIn("battery life", dispatch_msg.content)
         self.assertTrue(self.manager.is_dispatched(self.manager.get_pending_for("oracle")[0].id))
@@ -97,23 +124,6 @@ class TestDispatchConversation(unittest.IsolatedAsyncioTestCase):
         user_reply.reference.message_id = dispatch_msg.id
         mock_channel.fetch_message = AsyncMock(return_value=dispatch_msg)
 
-        # Mock AI backend response to the sovereign
-        mock_backend = MagicMock(spec=BaseAIBackend)
-        mock_backend.name = "agy (gemini-3.8-flash-high)"
-        mock_backend.stream_turn = AsyncMock(
-            return_value=BackendResult(
-                result=(
-                    "Glad to hear the S23 optimizations are holding up! "
-                    "The 7.5h SOT confirms disabling RAM Plus and background Wi-Fi scanning made a measurable difference. "
-                    "I will log this update into Dominion under contrite-witness."
-                ),
-                session_id="sample-conv-sess-123",
-                usage={"total_tokens": 150}
-            )
-        )
-        mock_backend.get_context_fraction.return_value = 0.1
-        mock_backend.mirror_session = MagicMock()
-
         with patch.object(oracle_bot, "ALLOWED_IDS", {123456789012345678}), \
              patch.object(oracle_bot, "ai_backend", mock_backend), \
              patch("oracle_bot.save_sessions"), \
@@ -130,7 +140,8 @@ class TestDispatchConversation(unittest.IsolatedAsyncioTestCase):
         # Verify backend received the context of the dispatch
         call_prompt = mock_backend.stream_turn.call_args.kwargs.get("prompt", "")
         self.assertIn("Battery life has been amazing", call_prompt)
-        self.assertIn("Dominion Dispatch", call_prompt)
+        self.assertIn("Replying to Oracle", call_prompt)
+        self.assertNotIn("Dominion Dispatch", call_prompt)
 
 
 if __name__ == "__main__":

@@ -10,14 +10,14 @@ from tempfile import TemporaryDirectory
 from dispatch_manager import Dispatch, DispatchManager
 
 
-SAMPLE_DISPATCH_MD = """# Dispatch — cross-machine requests
+SAMPLE_DISPATCH_MD_TEMPLATE = """# Dispatch — cross-machine requests
 
 ## Pending
 
 ### → oracle — check in on Contrite Witness de-Googled setup via Discord (~1 week out)
 
 - **filed:** 2026-09-24, from `infinity`, at the sovereign's ask (*"ask me how it's going"*).
-- **trigger / due:** ~2026-10-01 (one week after the 2026-09-24 de-Googling session).
+- **trigger / due:** ~{future_date} (one week out).
 - **what:** Ask user via Discord how [[contrite-witness]] is holding up under daily use:
   1. Real-world battery life & screen-on endurance.
   2. Background sync & notification reliability.
@@ -30,7 +30,7 @@ SAMPLE_DISPATCH_MD = """# Dispatch — cross-machine requests
 ### → oracle — immediate test dispatch
 
 - **filed:** 2026-09-24, from `infinity`.
-- **trigger / due:** 2026-09-20 (already past).
+- **trigger / due:** {past_date} (already past).
 - **what:** This is an immediate test.
 """
 
@@ -40,7 +40,13 @@ class TestDispatchManager(unittest.TestCase):
         self.temp_dir = TemporaryDirectory()
         self.dispatch_file = Path(self.temp_dir.name) / "DISPATCH.md"
         self.state_file = Path(self.temp_dir.name) / "dispatches_sent.json"
-        self.dispatch_file.write_text(SAMPLE_DISPATCH_MD, encoding="utf-8")
+        self.future_date = (date.today() + timedelta(days=7)).isoformat()
+        self.past_date = (date.today() - timedelta(days=4)).isoformat()
+        content = SAMPLE_DISPATCH_MD_TEMPLATE.format(
+            future_date=self.future_date,
+            past_date=self.past_date
+        )
+        self.dispatch_file.write_text(content, encoding="utf-8")
         self.manager = DispatchManager(
             dispatch_path=self.dispatch_file,
             state_path=self.state_file
@@ -56,7 +62,7 @@ class TestDispatchManager(unittest.TestCase):
         d1 = dispatches[0]
         self.assertEqual(d1.target, "oracle")
         self.assertIn("Contrite Witness", d1.title)
-        self.assertEqual(d1.due_date, "2026-10-01")
+        self.assertEqual(d1.due_date, self.future_date)
         self.assertIn("battery life", d1.what)
 
         d2 = dispatches[1]
@@ -95,10 +101,14 @@ class TestDispatchManager(unittest.TestCase):
     def test_format_discord_message(self):
         dispatches = self.manager.parse_dispatches()
         msg = self.manager.format_discord_message(dispatches[0])
-        self.assertIn("Dominion Dispatch", msg)
-        self.assertIn("oracle", msg)
-        self.assertIn("Contrite Witness", msg)
+        # Implementation details, headers, and wikilinks must NOT be present
+        self.assertNotIn("Dominion Dispatch", msg)
+        self.assertNotIn("[[", msg)
+        self.assertNotIn("]]", msg)
+        self.assertNotIn("oracle ·", msg)
+        # Content should be natural check-in
         self.assertIn("battery life", msg)
+        self.assertIn("contrite-witness", msg)
 
 
 if __name__ == "__main__":

@@ -155,6 +155,16 @@ class TestCuriosityEngine(unittest.TestCase):
 
     def test_classify_intent(self):
         self.engine.run_survey(force=True)
+        # Ensure active question is father-house-improvements for testing topic alignment
+        st = self.engine.load_state()
+        qq = st.get("queued_questions", [])
+        for idx, item in enumerate(qq):
+            if item.get("topic") == "father":
+                father_item = qq.pop(idx)
+                qq.insert(0, father_item)
+                break
+        st["queued_questions"] = qq
+        self.engine.save_state(st)
         q = self.engine.pop_next_question()
         self.engine.register_message_sent(message_id=9999, channel_id="dm123")
 
@@ -169,7 +179,11 @@ class TestCuriosityEngine(unittest.TestCase):
         self.assertEqual(self.engine.classify_intent("docker ps"), "unrelated")
         self.assertEqual(self.engine.classify_intent("can you restart the bot?"), "unrelated")
 
-        # Answer to curiosity question
+        # Meta-feedback should be classified as unrelated rather than hijacking curiosity
+        self.assertEqual(self.engine.classify_intent("bro this dispatch should have been processed by you"), "unrelated")
+        self.assertEqual(self.engine.classify_intent("keep it like a natural conversation don't show impl detail"), "unrelated")
+
+        # Answer to curiosity question with topic alignment
         self.assertEqual(
             self.engine.classify_intent("My father is remodeling the kitchen and balcony, should be done in November."),
             "answer",

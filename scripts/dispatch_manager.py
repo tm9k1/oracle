@@ -49,6 +49,23 @@ class Dispatch:
         tn = target_name.strip().lower()
         return t == tn or tn in t or t in ("all", "any")
 
+def clean_dispatch_for_message(text: str) -> str:
+    """Strip wikilinks and convert robotic dispatch instructions into natural assistant text."""
+    if not text:
+        return ""
+    # Strip [[slug|label]] -> label, [[slug]] -> slug
+    cleaned = re.sub(r"\[\[(?:[^\]|]+\|)?([^\]]+)\]\]", r"\1", text)
+    # Transform "Ask Piyush/user via Discord how/whether/..." into "Checking in on how/whether/..."
+    cleaned = re.sub(
+        r"^(?:Ask\s+(?:Piyush|the\s+sovereign|user)\s+(?:via\s+Discord\s+)?)(how|whether|if|about|on)?\s*",
+        lambda m: f"Checking in on {m.group(1)} " if m.group(1) else "Checking in: ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    # Strip any trailing directive footers like "Reply directly..."
+    cleaned = re.sub(r"\n*_(?:Reply\s+directly[^\n]*|\([^\n]*reply[^\n]*\))_\s*$", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
+
 
 class DispatchManager:
     def __init__(self, dispatch_path: Optional[Path] = None, state_path: Optional[Path] = None):
@@ -172,15 +189,15 @@ class DispatchManager:
         return due
 
     def format_discord_message(self, dispatch: Dispatch) -> str:
-        """Format a dispatch for presentation in a Discord DM."""
-        due_str = f"Due: `{dispatch.due_date}`" if dispatch.due_date else f"Trigger: `{dispatch.trigger}`"
-        msg = (
-            f"📋 **Dominion Dispatch** (`{dispatch.target}` · {due_str})\n"
-            f"**{dispatch.title}**\n\n"
-            f"{dispatch.what}\n\n"
-            f"_Reply directly to this message to record your update or answer._"
-        )
-        return msg
+        """Format a dispatch into a natural conversational message for Discord.
+        Strips internal implementation details, wikilinks, and metadata headers."""
+        clean_what = clean_dispatch_for_message(dispatch.what)
+        if clean_what:
+            return clean_what
+
+        clean_title = clean_dispatch_for_message(dispatch.title)
+        clean_title = re.sub(r"\s*via\s+Discord\s*", " ", clean_title, flags=re.IGNORECASE).strip()
+        return clean_title
 
 
 # Module-level convenience singleton

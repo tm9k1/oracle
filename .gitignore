@@ -16,6 +16,7 @@ venv/
 sessions.json
 sessions/
 curiosity_state.json
+dispatches_sent.json
 last_changes.txt
 logs/
 *.log

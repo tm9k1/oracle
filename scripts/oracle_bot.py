@@ -601,6 +601,50 @@ _dispatch_checker_task: Optional[asyncio.Task] = None
 DISPATCH_CHECK_INTERVAL = float(CFG.get("dominion", {}).get("dispatch_check_interval_seconds", 3600))
 
 
+async def _synthesize_dispatch_message(dispatch: Dispatch) -> str:
+    """
+    Synthesize an internal Dominion dispatch task into a natural, conversational
+    assistant check-in to Piyush. Dispatches are instructions for the agent to execute,
+    not templates to dump raw to the user.
+    """
+    manager = DispatchManager()
+    fallback = manager.format_discord_message(dispatch)
+
+    if not ai_backend:
+        return fallback
+
+    prompt = (
+        f"You are Oracle, Piyush's AI assistant / personal secretary on Discord.\n"
+        f"A dispatch task from Dominion has come due for you to execute:\n\n"
+        f"Task: {dispatch.title}\n"
+        f"Details:\n{dispatch.what}\n\n"
+        f"Please write a natural, conversational message to send directly to Piyush on Discord to carry out this check-in.\n"
+        f"Rules:\n"
+        f"- Match his terse, direct tone. Keep it concise (1 to 3 short sentences or simple conversational questions).\n"
+        f"- Never output headers like 'DOMINION DISPATCH', dates, target tags, or meta explanations.\n"
+        f"- Strip any internal wikilinks like [[entity]]; use natural names (e.g. S23 or the device name).\n"
+        f"- Make it sound like a personal assistant naturally checking in, easy for him to answer in one quick message.\n"
+        f"- Output ONLY the final message text to send to Piyush, with no quotes or meta preamble."
+    )
+
+    try:
+        res = await asyncio.wait_for(
+            ai_backend.run_turn(prompt),
+            timeout=30.0,
+        )
+        if res and res.success and res.result and res.result.strip():
+            msg = res.result.strip()
+            if (msg.startswith('"') and msg.endswith('"')) or (msg.startswith("'") and msg.endswith("'")):
+                msg = msg[1:-1].strip()
+            msg = re.sub(r'^(?:📋\s*)?(?:\*\*|\#\#)?\s*Dominion\s+Dispatch[^\n]*\n*', '', msg, flags=re.IGNORECASE).strip()
+            if msg:
+                return msg
+    except Exception as e:
+        log.warning("AI synthesis of dispatch [%s] failed: %s. Using cleaned fallback.", dispatch.id, e)
+
+    return fallback
+
+
 async def _periodic_dispatch_checker(dm=None):
     """Periodically check DISPATCH.md for due dispatches targeting Oracle and notify owner via DM."""
     await asyncio.sleep(45)
@@ -610,8 +654,8 @@ async def _periodic_dispatch_checker(dm=None):
                 manager = DispatchManager()
                 due = manager.get_due_for("oracle", ignore_already_sent=True)
                 for d in due:
-                    log.info("Dispatch due for Oracle: [%s] %s — sending to owner DM", d.id, d.title)
-                    msg = manager.format_discord_message(d)
+                    log.info("Dispatch due for Oracle: [%s] %s — synthesizing and sending to owner DM", d.id, d.title)
+                    msg = await _synthesize_dispatch_message(d)
                     sent_msg = await dm.send(msg)
                     manager.mark_dispatched(d, channel_id=str(dm.id), message_id=sent_msg.id)
                     await asyncio.sleep(2)
@@ -652,7 +696,7 @@ async def _handle_dispatch_command(channel, user_text: str):
             return
         sent_count = 0
         for d in due:
-            msg = manager.format_discord_message(d)
+            msg = await _synthesize_dispatch_message(d)
             sent_msg = await channel.send(msg)
             manager.mark_dispatched(d, channel_id=str(channel.id), message_id=sent_msg.id)
             sent_count += 1
@@ -670,7 +714,7 @@ async def _handle_dispatch_command(channel, user_text: str):
             await channel.send(f"No dispatch found matching `{query}`.")
             return
         d = matched[0]
-        msg = manager.format_discord_message(d)
+        msg = await _synthesize_dispatch_message(d)
         sent_msg = await channel.send(msg)
         manager.mark_dispatched(d, channel_id=str(channel.id), message_id=sent_msg.id)
 

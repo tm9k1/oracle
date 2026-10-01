@@ -786,7 +786,17 @@ class CuriosityEngine:
             if not text.startswith(("/", "!", "$")):
                 return "answer"
 
-        # 3. Check for obvious bot queries or administrative commands
+        # 3. Meta-conversational feedback, commands, or discussions about the bot/dispatch/curiosity
+        meta_phrases = (
+            "dispatch", "curiosity", "should have been", "don't show", "dont show",
+            "keep it like", "natural message", "engineered", "why did you", "bad way to ask",
+            "impl detail", "implementation detail", "bot", "assistant", "persona",
+            "stop asking", "don't ask me", "dont ask me", "change how you"
+        )
+        if any(p in lower for p in meta_phrases):
+            return "unrelated"
+
+        # 4. Check for obvious bot queries or administrative commands
         command_starters = (
             "/", "!", "sudo ", "docker ", "systemctl ", "git ", "ssh ", "ls ", "cat ",
             "what is ", "what's ", "how is ", "how do ", "can you ", "could you ",
@@ -799,23 +809,31 @@ class CuriosityEngine:
                 return "answer"
             return "unrelated"
 
-        # 4. Check for topic alignment or informative personal statement
+        # 5. Check for topic alignment or informative personal statement
         topic = aq_data.get("topic", "").lower()
         question = aq_data.get("question", "").lower()
         topic_words = set(re.findall(r"\w{3,}", f"{topic} {question}"))
+        stopwords = {
+            "the", "and", "for", "with", "this", "that", "you", "are", "have", "from",
+            "open", "questions", "notes", "regarding", "dominion", "still", "been",
+            "leaning", "what", "how", "will", "would", "about", "your", "can", "our"
+        }
+        topic_keywords = topic_words - stopwords
 
         user_words = set(re.findall(r"\w{3,}", lower))
-        overlap = topic_words.intersection(user_words)
+        overlap = topic_keywords.intersection(user_words)
 
-        # If user provides a descriptive response (> 3 words) or has word overlap
-        if len(text.split()) >= 3 and (overlap or not lower.endswith("?")):
+        if overlap:
             return "answer"
 
-        # If it's a pure question from the user, it's unrelated
-        if lower.endswith("?"):
-            return "unrelated"
+        # Check for direct concise choice answers (e.g. "accept", "size up", "second ups", "yes", "no")
+        if len(text.split()) <= 6:
+            q_choices = set(re.findall(r"\b\w{3,}\b", question)) - stopwords
+            if user_words.intersection(q_choices):
+                return "answer"
 
-        return "answer"
+        # If it's a pure question from the user or unreferenced statement with no overlap, it's unrelated
+        return "unrelated"
 
     def record_answer(self, user_answer: str, auto_stage: bool = True) -> Tuple[ActiveQuestion, Optional[Path]]:
         """Mark active question as answered and stage insight into Dominion inbox."""
