@@ -821,15 +821,27 @@ class CuriosityEngine:
         topic_keywords = topic_words - stopwords
 
         user_words = set(re.findall(r"\w{3,}", lower))
-        overlap = topic_keywords.intersection(user_words)
 
-        if overlap:
+        def words_align(w1: str, w2: str) -> bool:
+            if w1 == w2:
+                return True
+            def stem(w: str) -> str:
+                for suf in ("ing", "ed", "er", "es", "s"):
+                    if w.endswith(suf) and len(w) - len(suf) >= 3:
+                        return w[:-len(suf)]
+                return w
+            s1, s2 = stem(w1), stem(w2)
+            if s1 == s2:
+                return True
+            return len(s1) >= 3 and len(s2) >= 3 and (s1.startswith(s2) or s2.startswith(s1))
+
+        if any(words_align(uw, tw) for uw in user_words for tw in topic_keywords):
             return "answer"
 
         # Check for direct concise choice answers (e.g. "accept", "size up", "second ups", "yes", "no")
         if len(text.split()) <= 6:
             q_choices = set(re.findall(r"\b\w{3,}\b", question)) - stopwords
-            if user_words.intersection(q_choices):
+            if any(words_align(uw, qc) for uw in user_words for qc in q_choices):
                 return "answer"
 
         # If it's a pure question from the user or unreferenced statement with no overlap, it's unrelated
