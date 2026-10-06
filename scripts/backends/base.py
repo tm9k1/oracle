@@ -90,7 +90,9 @@ class BaseAIBackend(ABC):
         """Calculate fraction of context window used (0.0 to 1.0)."""
         return 0.0
 
-    async def compact(self, session_id: str) -> Optional[BackendResult]:
+    async def compact(
+        self, session_id: str, system_prompt: Optional[str] = None
+    ) -> Optional[BackendResult]:
         """Compact/summarize session if supported by the backend."""
         return None
 

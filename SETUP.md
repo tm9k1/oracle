@@ -1,69 +1,133 @@
-# Oracle AI Setup
+# Oracle AI Setup & Runbook
 
-## 1. Credentials & Configuration
+Step-by-step setup guide for Oracle on Linux / homelab environments.
 
-Edit `/home/tm9k1/.ai/.env`:
+---
+
+## 1. Prerequisites & Dependencies
+
+- Python 3.11+
+- Virtual environment (`.venv`)
+- [Antigravity CLI](https://github.com/google-deepmind/antigravity) (`agy`) installed and authenticated, or Anthropic CLI (`claude`) / API key.
+- Discord Application & Bot Token
+
+Install Python dependencies:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r scripts/requirements.txt
 ```
-DISCORD_TOKEN=your_bot_token
-ANTHROPIC_API_KEY=sk-ant-... (optional, if using direct api)
+
+---
+
+## 2. Credentials & Configuration
+
+Copy the sample environment file to `.env`:
+```bash
+cp .env.example .env
 ```
 
-Tune backend and model in `/home/tm9k1/.ai/config.json`:
+Edit `.env`:
+```ini
+DISCORD_TOKEN=your_bot_token_here
+ANTHROPIC_API_KEY=sk-ant-... # Optional: required only if using Claude API direct
+```
+
+Configure AI models, behavior, and thresholds in `config.json`:
 ```json
 {
   "ai": {
     "backend": "agy",
-    "model": "gemini-3.7-flash-high",
-    "effort": "high"
+    "model": "gemini-3.8-flash-high",
+    "effort": "high",
+    "timeout_seconds": 1500,
+    "compact_threshold": 0.65,
+    "compact_idle_seconds": 180,
+    "auto_upgrade": {
+      "enabled": true,
+      "series": "flash",
+      "effort": "high",
+      "check_interval_seconds": 86400
+    }
+  },
+  "discord": {
+    "token": "YOUR_DISCORD_BOT_TOKEN_HERE",
+    "allowed_user_ids": [],
+    "allowed_guild_ids": [],
+    "allowed_channel_ids": [],
+    "allow_dms": true,
+    "bot_name": "Oracle",
+    "edit_interval": 5,
+    "max_message_chunks": 4
+  },
+  "kb": {
+    "base_dir": "/home/tm9k1/.ai",
+    "max_context_chars": 20000,
+    "max_retrieval_results": 8,
+    "history_turns": 20,
+    "stale_threshold_days": 7,
+    "resume_max_age_minutes": 30
   }
 }
 ```
 
-## 2. Discord bot setup
+---
 
-1. Go to https://discord.com/developers/applications
-2. New Application → Bot → Reset Token → copy the token into `.env`
-3. Under **OAuth2 → URL Generator**: check `bot`, then check `Send Messages`, `Read Message History`, `Read Messages/View Channels`
-4. Open the generated URL in your browser to invite the bot to your server
-5. Enable **Message Content Intent** under Bot → Privileged Gateway Intents
+## 3. Discord Bot Application Setup
 
-## 3. Install the systemd service
+1. Open the [Discord Developer Portal](https://discord.com/developers/applications).
+2. Create a **New Application** → select **Bot**.
+3. Under **Privileged Gateway Intents**, enable **Message Content Intent**.
+4. Under **OAuth2 → URL Generator**:
+   - Scopes: `bot`
+   - Permissions: `Send Messages`, `Read Message History`, `View Channels`, `Attach Files`, `Add Reactions`
+5. Generate the invite URL and authorize the bot into your private server.
+6. Copy the Bot Token into `.env`.
+
+---
+
+## 4. Systemd Service Deployment
+
+To run Oracle continuously in the background under systemd user management:
 
 ```bash
+# Link or install service file to user systemd directory
+mkdir -p ~/.config/systemd/user
+cp scripts/oracle-bot.service ~/.config/systemd/user/oracle-discord.service
+
+# Reload and enable
 systemctl --user daemon-reload
 systemctl --user enable oracle-discord
 systemctl --user restart oracle-discord
+
+# Check service status
+systemctl --user status oracle-discord
 ```
 
-## 4. Talk to Oracle
+---
 
-- **DMs**: DM the bot directly
-- **New session**: send `new session` or `/new` or `reset`
+## 5. Interacting with Oracle
 
-## Files
+- **Direct Messages**: Message the bot directly in Discord DMs or in authorized channels.
+- **Start Fresh Session**: Send `/new`, `new session`, or `fresh` to start a new context.
+- **Manual Compaction**: Send `/compact` to immediately trigger transcript summarization.
+- **Routines**:
+  - `/routine list` — view configured recurring schedules and daily completion status.
+  - `/routine run <id>` — manually trigger a specific scheduled routine dispatch.
+- **Safe-word Emergency Restart**: Send `reset` or `restart bot` to cleanly flush state and restart the bot process.
 
-```
-.ai/
-├── .env                    ← secrets (DISCORD_TOKEN)
-├── config.json             ← AI backend, model, discord restrictions
-├── USER.md                   ← user context (thin pointer stub to Dominion)
-├── stars/                  ← guiding stars (positive patterns)
-├── scars/                  ← lessons learned
-├── context/                ← active project context
-├── sessions.json           ← session logs & state
-├── logs/                   ← bot logs
-└── scripts/
-    ├── oracle_bot.py       ← the bot entrypoint
-    ├── backends/           ← modular AI backend implementations
-    │   ├── base.py         ← BaseAIBackend & BackendResult
-    │   ├── agy.py          ← Antigravity CLI backend
-    │   └── claude_cli.py   ← Claude Code CLI backend
-    ├── update_kb.py        ← KB extractor
-    └── retrieve.py         ← RAG engine
-```
+---
 
-## Logs
+## 6. Logs & Diagnostics
 
+Monitor live operational logs:
 ```bash
-tail -f /home/tm9k1/.ai/logs/oracle_bot.log   # live bot activity
+journalctl --user -u oracle-discord -f
+# or directly from file
+tail -f /home/tm9k1/.ai/logs/oracle_bot.log
+```
+
+Run test suite:
+```bash
+PYTHONPATH=/home/tm9k1/.ai/scripts python3 -m unittest discover -s /home/tm9k1/.ai/scripts/tests
 ```

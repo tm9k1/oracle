@@ -1,0 +1,37 @@
+[
+  {
+    "id": "cotton-feed-1",
+    "title": "Cotton Meal 1 (Breakfast)",
+    "time": "08:00",
+    "message": "🍼 **Cotton Feeding Reminder** (Meal 1/5 — 08:00 AM)\n0.5 scoop (half scoop) Vet-o-Lac slurry in lukewarm water.",
+    "enabled": true
+  },
+  {
+    "id": "cotton-feed-2",
+    "title": "Cotton Meal 2 (Lunch)",
+    "time": "12:00",
+    "message": "🍼 **Cotton Feeding Reminder** (Meal 2/5 — 12:00 PM)\n0.5 scoop (half scoop) Vet-o-Lac slurry in lukewarm water.",
+    "enabled": true
+  },
+  {
+    "id": "cotton-feed-3",
+    "title": "Cotton Meal 3 (Afternoon)",
+    "time": "16:00",
+    "message": "🍼 **Cotton Feeding Reminder** (Meal 3/5 — 04:00 PM)\n0.5 scoop (half scoop) Vet-o-Lac slurry in lukewarm water.",
+    "enabled": true
+  },
+  {
+    "id": "cotton-feed-4",
+    "title": "Cotton Meal 4 (Dinner)",
+    "time": "20:00",
+    "message": "🍼 **Cotton Feeding Reminder** (Meal 4/5 — 08:00 PM)\n0.5 scoop (half scoop) Vet-o-Lac slurry in lukewarm water.",
+    "enabled": true
+  },
+  {
+    "id": "cotton-feed-5",
+    "title": "Cotton Meal 5 (Bedtime)",
+    "time": "00:00",
+    "message": "🍼 **Cotton Feeding Reminder** (Meal 5/5 — 12:00 AM Midnight)\n0.5 scoop (half scoop) Vet-o-Lac slurry before sleep.",
+    "enabled": true
+  }
+]

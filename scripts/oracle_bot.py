@@ -11,6 +11,7 @@ import os
 import re
 import signal
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -26,11 +27,13 @@ if str(SCRIPT_DIR) not in sys.path:
 from backends import BackendResult, BaseAIBackend, get_backend
 from dispatch_manager import Dispatch, DispatchManager
 from curiosity_engine import CuriosityEngine, ActiveQuestion
+from routine_manager import Routine, RoutineManager
 
 AI_DIR = Path("/home/tm9k1/.ai")
 CONFIG_FILE = AI_DIR / "config.json"
 SESSIONS_FILE = AI_DIR / "sessions.json"
 LAST_CHANGES_FILE = AI_DIR / "last_changes.txt"
+RESTART_PENDING_FILE = AI_DIR / ".restart_pending"
 DOWNLOADS_DIR = AI_DIR / "downloads"
 ATTACHMENTS_DIR = DOWNLOADS_DIR / "attachments"
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -99,8 +102,16 @@ COMPACT_IDLE_SECS = float(AI_CFG.get("compact_idle_seconds", 600))
 TIMEOUT_SECONDS = int(AI_CFG.get("timeout_seconds", 1500))
 
 NEW_SESSION_TRIGGERS = {
-    "new session", "fresh session", "new", "fresh", "reset",
-    "/new", "/reset", "/fresh",
+    "new session", "fresh session", "new", "fresh",
+    "/new", "/fresh",
+}
+
+SAFE_WORD_RESTART_TRIGGERS = {
+    "reset", "/reset",
+}
+
+COMPACT_TRIGGERS = {
+    "compact", "/compact",
 }
 
 CHANGES = (
@@ -138,7 +149,6 @@ def _handle_sys_exception(exc_type, exc_value, exc_traceback):
 
 sys.excepthook = _handle_sys_exception
 
-# Graceful signal handling for systemd restarts / SIGTERM / SIGINT
 def _handle_signal(sig, frame):
     sig_name = signal.Signals(sig).name if hasattr(signal, "Signals") else str(sig)
     log.info("Received signal %s — initiating graceful teardown...", sig_name)
@@ -147,6 +157,13 @@ def _handle_signal(sig, frame):
             save_sessions(sessions)
     except Exception as e:
         log.error("Failed to save sessions during signal teardown: %s", e)
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(bot.close())
+            return
+    except Exception:
+        pass
     sys.exit(0)
 
 try:
@@ -440,6 +457,7 @@ async def _quota_watcher(reset_at: float):
 
 _channel_locks: dict[str, asyncio.Lock] = {}
 _bg_pollers: dict[str, asyncio.Task] = {}
+_compact_tasks: dict[str, asyncio.Task] = {}
 
 def _lock_for(channel_id: str) -> asyncio.Lock:
     """One lock per channel — serializes invocations to prevent racing against the same session."""
@@ -535,35 +553,57 @@ async def _poll_background_tasks(channel, channel_id: str, session_id: str):
 
     log.warning("bg task poller timed out for session %s with no task changes", session_id[:8])
 
-async def _maybe_compact(channel, channel_id: str, session_id: str, fraction: float):
-    """Wait for idle, then /compact if context is still over threshold and session unchanged."""
-    pct = int(fraction * 100)
-    log.info("context at %d%%, scheduling compact for session %s after %ds idle",
-             pct, session_id[:8], int(COMPACT_IDLE_SECS))
-    await asyncio.sleep(COMPACT_IDLE_SECS)
-
-    current = sessions.get(channel_id, {})
-    if current.get("session_id") != session_id:
-        log.info("compact skipped: session changed while waiting")
-        return
-    if time.time() - current.get("last_active", 0) < COMPACT_IDLE_SECS:
-        log.info("compact skipped: session still active")
-        return
-
+async def _do_compact(channel, channel_id: str, session_id: str, pct: int):
+    """Perform session compaction and rollover into a fresh session."""
     log.info("compacting session %s (was %d%% full)", session_id[:8], pct)
     try:
         async with _lock_for(channel_id):
-            data = await ai_backend.compact(session_id)
-        if data and data.session_id:
-            new_sid = data.session_id
-            sessions[channel_id]["session_id"] = new_sid
-            sessions[channel_id]["pending_prompt"] = None
-            save_sessions(sessions)
-            ai_backend.mirror_session(new_sid)
-            log.info("compacted %s → %s", session_id[:8], new_sid[:8])
-            await channel.send(f"_(context was {pct}% full — compacted)_")
+            current = sessions.get(channel_id, {})
+            if current.get("session_id") != session_id:
+                log.info("compact aborted: session changed before lock acquisition")
+                return
+            data = await ai_backend.compact(session_id, system_prompt=_kb_system_prompt())
+            if data and data.session_id and data.session_id != session_id:
+                new_sid = data.session_id
+                sessions[channel_id]["session_id"] = new_sid
+                sessions[channel_id]["pending_prompt"] = None
+                sessions[channel_id]["last_active"] = time.time()
+                save_sessions(sessions)
+                ai_backend.mirror_session(new_sid)
+
+                # Reset background poller for new session
+                old_poller = _bg_pollers.pop(channel_id, None)
+                if old_poller:
+                    old_poller.cancel()
+                _bg_pollers[channel_id] = asyncio.create_task(
+                    _poll_background_tasks(channel, channel_id, new_sid)
+                )
+
+                log.info("compacted %s → %s", session_id[:8], new_sid[:8])
+                await channel.send(f"_(context was {pct}% full — compacted into fresh session)_")
+            else:
+                log.warning("compaction did not produce a fresh session ID for %s", session_id[:8])
     except Exception as e:
         log.error("compaction failed: %s", e)
+
+async def _maybe_compact(channel, channel_id: str, session_id: str, fraction: float):
+    """Wait for idle, then compact if context is still over threshold and session unchanged."""
+    pct = int(fraction * 100)
+    idle_target = 30.0 if fraction >= 0.85 else COMPACT_IDLE_SECS
+    log.info("context at %d%%, scheduling compact for session %s after %ds idle",
+             pct, session_id[:8], int(idle_target))
+    while True:
+        current = sessions.get(channel_id, {})
+        if current.get("session_id") != session_id:
+            log.info("compact cancelled: session changed while waiting")
+            return
+        idle = time.time() - current.get("last_active", 0)
+        remaining = idle_target - idle
+        if remaining <= 0:
+            break
+        await asyncio.sleep(remaining + 1)
+
+    await _do_compact(channel, channel_id, session_id, pct)
 
 # ── Daily Model Upgrade Checker ──────────────────────────────────────────────
 
@@ -841,6 +881,72 @@ async def _handle_curiosity_command(channel, user_text: str):
         )
         await channel.send(help_text)
 
+# ── Dominion Routine Service ──────────────────────────────────────────────────
+
+_routine_checker_task: Optional[asyncio.Task] = None
+ROUTINE_CHECK_INTERVAL = 30.0  # seconds
+
+
+async def _periodic_routine_checker(dm=None):
+    """Periodically check for due routines (e.g. Cotton's meals) and notify owner via DM."""
+    await asyncio.sleep(15)
+    while True:
+        try:
+            if dm:
+                manager = RoutineManager()
+                due = manager.get_due_routines()
+                for r in due:
+                    log.info("Routine due: [%s] %s — sending to owner DM", r.id, r.title)
+                    sent_msg = await dm.send(r.message)
+                    manager.mark_routine_sent(r, channel_id=str(dm.id), message_id=sent_msg.id)
+                    await asyncio.sleep(1)
+        except Exception as e:
+            log.error("Error in periodic routine checker: %s", e)
+
+        await asyncio.sleep(ROUTINE_CHECK_INTERVAL)
+
+
+async def _handle_routine_command(channel, user_text: str):
+    """Handle /routine commands in Discord."""
+    parts = user_text.strip().split()
+    subcmd = parts[1].lower() if len(parts) > 1 else "list"
+    manager = RoutineManager()
+
+    if subcmd in ("list", "all"):
+        routines = manager.parse_routines()
+        if not routines:
+            await channel.send("No routines configured.")
+            return
+        lines = ["📅 **Dominion Routines**:"]
+        for r in routines:
+            status = "✅" if r.enabled else "⏸️"
+            sent = " *(sent today)*" if manager.is_sent_today(r.id) else ""
+            lines.append(f"• {status} `{r.target_time}` — **{r.title}**{sent}")
+        await channel.send("\n".join(lines))
+
+    elif subcmd in ("run", "trigger"):
+        if len(parts) < 3:
+            await channel.send("Usage: `/routine run <id>` (e.g. `/routine run cotton-feed-3`)")
+            return
+        rid = parts[2].lower()
+        routines = manager.parse_routines()
+        matched = [r for r in routines if rid == r.id.lower() or rid in r.id.lower()]
+        if not matched:
+            await channel.send(f"No routine found matching `{rid}`.")
+            return
+        r = matched[0]
+        await channel.send(r.message)
+        manager.mark_routine_sent(r, channel_id=str(channel.id))
+
+    else:
+        help_text = (
+            "**Dominion Routine Commands:**\n"
+            "• `/routine list` — view all daily routines and today's status\n"
+            "• `/routine run <id>` — manually trigger a routine reminder"
+        )
+        await channel.send(help_text)
+
+
 
 # ── Dominion KB Extraction ───────────────────────────────────────────────────
 
@@ -964,6 +1070,59 @@ async def _react_done(message: discord.Message):
         pass
     await _react(message, "✅")
 
+async def _handle_safe_word_restart(message: discord.Message, channel_id: str):
+    log.warning("Safe word 'reset' received from %s (channel %s). Initiating bot restart.", message.author, channel_id)
+    try:
+        await message.add_reaction("🔄")
+    except Exception:
+        pass
+    try:
+        await message.channel.send("🔄 Safe word received. Restarting Oracle...")
+    except Exception as e:
+        log.error("Failed to send restart message: %s", e)
+
+    # Clear current channel session and pending confirmation
+    sessions.pop(channel_id, None)
+    pending.pop(channel_id, None)
+    save_sessions(sessions)
+
+    # Cancel background pollers, extractors & compaction for this channel
+    old_poller = _bg_pollers.pop(channel_id, None)
+    if old_poller:
+        old_poller.cancel()
+    old_compact = _compact_tasks.pop(channel_id, None)
+    if old_compact:
+        old_compact.cancel()
+    old_kb = _kb_extract_tasks.pop(channel_id, None)
+    if old_kb:
+        old_kb.cancel()
+
+    # Record restart pending marker so Oracle reports online upon reboot
+    try:
+        RESTART_PENDING_FILE.write_text(json.dumps({
+            "channel_id": channel_id,
+            "author": str(message.author),
+            "timestamp": time.time(),
+            "reason": "safe_word_reset",
+        }))
+    except Exception as e:
+        log.error("Failed to write restart pending file: %s", e)
+
+    # Failsafe watchdog thread: force unblockable exit via os._exit(0) in 3 seconds if bot.close() hangs
+    def _force_exit():
+        time.sleep(3)
+        log.warning("Graceful shutdown timed out; forcing exit via os._exit(0)")
+        os._exit(0)
+
+    threading.Thread(target=_force_exit, daemon=True).start()
+
+    try:
+        await bot.close()
+    except Exception as e:
+        log.warning("Error closing bot: %s", e)
+    finally:
+        sys.exit(0)
+
 async def _dispatch_with_reactions(message: discord.Message, channel, user_text: str, session_id: Optional[str], channel_id: str):
     await _react(message, "👀")
     try:
@@ -997,6 +1156,9 @@ async def _dispatch(channel, user_text: str, session_id: Optional[str], channel_
                 system_prompt=_kb_system_prompt(),
                 periodic_status_callback=on_periodic_update,
             )
+        # Clear pending_prompt immediately so reboots/reloads don't re-dispatch an answered turn
+        sessions[channel_id]["pending_prompt"] = None
+        save_sessions(sessions)
     except Exception as e:
         log.error("AI backend error: %s", e)
         is_timeout = "timed out" in str(e).lower()
@@ -1102,7 +1264,12 @@ async def _dispatch(channel, user_text: str, session_id: Optional[str], channel_
     # Compaction check
     fraction = ai_backend.get_context_fraction(data)
     if fraction >= COMPACT_THRESHOLD and data.session_id:
-        asyncio.create_task(_maybe_compact(channel, channel_id, data.session_id, fraction))
+        old_compact = _compact_tasks.pop(channel_id, None)
+        if old_compact:
+            old_compact.cancel()
+        _compact_tasks[channel_id] = asyncio.create_task(
+            _maybe_compact(channel, channel_id, data.session_id, fraction)
+        )
 
     # Post-turn idle KB extraction (debounced: resets idle timer on each message)
     if data.session_id:
@@ -1113,19 +1280,59 @@ async def _dispatch(channel, user_text: str, session_id: Optional[str], channel_
             _maybe_extract_kb(channel_id, data.session_id)
         )
 
+def _is_prompt_already_answered(session_id: Optional[str], prompt: str) -> bool:
+    """Check if the session transcript already recorded a completed model turn for this prompt."""
+    if not session_id:
+        return False
+    tpath = _transcript_path(session_id)
+    if not tpath or not Path(tpath).exists():
+        return False
+    try:
+        with open(tpath, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        last_user_idx = -1
+        has_model_after = False
+        norm_prompt = prompt.strip().split("\n")[0][:100].strip()
+        for i, line in enumerate(lines):
+            if not line.strip():
+                continue
+            try:
+                step = json.loads(line)
+            except Exception:
+                continue
+            if step.get("source") in ("USER_EXPLICIT", "USER") or step.get("type") == "USER_INPUT":
+                content = step.get("content", "")
+                if norm_prompt and norm_prompt in content:
+                    last_user_idx = i
+                    has_model_after = False
+            elif last_user_idx != -1 and (step.get("source") == "MODEL" or step.get("type") == "PLANNER_RESPONSE"):
+                has_model_after = True
+        return has_model_after
+    except Exception as e:
+        log.warning("Error checking if prompt was already answered: %s", e)
+        return False
+
 async def _resume_interrupted():
     for channel_id, session in list(sessions.items()):
         prompt = session.get("pending_prompt")
         if not prompt:
             continue
+
+        # Immediately clear pending_prompt so we never loop or double-send on subsequent restarts
+        sessions[channel_id]["pending_prompt"] = None
+        save_sessions(sessions)
+
         age = time.time() - session.get("last_active", 0)
         if age > RESUME_MAX_AGE:
             log.info("dropping stale pending_prompt for channel %s (age %.0fs)", channel_id, age)
-            sessions[channel_id]["pending_prompt"] = None
-            save_sessions(sessions)
             continue
+
         sid = session.get("session_id") or None
-        log.info("resuming interrupted prompt for channel %s", channel_id)
+        if sid and _is_prompt_already_answered(sid, prompt):
+            log.info("pending_prompt for channel %s was already completed in session %s; skipping duplicate dispatch", channel_id, sid[:8])
+            continue
+
+        log.info("resuming genuinely interrupted prompt for channel %s", channel_id)
         try:
             channel = await bot.fetch_channel(int(channel_id))
             await channel.send("_(picking up where I left off...)_")
@@ -1171,6 +1378,23 @@ async def on_ready():
         await _update_presence(discord.Status.online)
         await _resume_interrupted()
 
+        # Check for safe-word restart pending marker
+        if RESTART_PENDING_FILE.exists():
+            try:
+                rdata = json.loads(RESTART_PENDING_FILE.read_text())
+                RESTART_PENDING_FILE.unlink(missing_ok=True)
+                r_cid = rdata.get("channel_id")
+                if r_cid:
+                    try:
+                        r_chan = await bot.fetch_channel(int(r_cid))
+                        if r_chan:
+                            await r_chan.send("✅ Oracle restarted successfully and is back online.")
+                    except Exception as ce:
+                        log.warning("Could not send restart confirmation to channel %s: %s", r_cid, ce)
+            except Exception as re:
+                log.warning("Error handling restart pending file: %s", re)
+                RESTART_PENDING_FILE.unlink(missing_ok=True)
+
         global _model_checker_task
         if _model_checker_task is None or _model_checker_task.done():
             _model_checker_task = asyncio.create_task(_daily_model_upgrade_checker(dm))
@@ -1182,6 +1406,10 @@ async def on_ready():
         global _curiosity_checker_task
         if _curiosity_checker_task is None or _curiosity_checker_task.done():
             _curiosity_checker_task = asyncio.create_task(_periodic_curiosity_checker(dm))
+
+        global _routine_checker_task
+        if _routine_checker_task is None or _routine_checker_task.done():
+            _routine_checker_task = asyncio.create_task(_periodic_routine_checker(dm))
     except Exception as e:
         log.warning("on_ready error: %s", e)
 
@@ -1229,6 +1457,27 @@ async def on_message(message: discord.Message):
         else:
             user_text = f"{user_text}\n\n[Inbound Attachments]\n{att_section}"
 
+    # ── Safe-word forced restart ──────────────────────────────────────────────
+    clean_text = user_text.strip().lower()
+    if not downloaded_attachments and clean_text in SAFE_WORD_RESTART_TRIGGERS:
+        await _handle_safe_word_restart(message, channel_id)
+        return
+
+    # ── Manual compaction trigger ─────────────────────────────────────────────
+    if not downloaded_attachments and clean_text in COMPACT_TRIGGERS:
+        cur_sid = sessions.get(channel_id, {}).get("session_id")
+        if not cur_sid:
+            await message.channel.send("No active session to compact.")
+            return
+        await _react(message, "🔄")
+        status_msg = await message.channel.send("_(compacting session...)_")
+        await _do_compact(message.channel, channel_id, cur_sid, 100)
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        return
+
     # ── Quota guard ───────────────────────────────────────────────────────────
     if _quota_reset_at and time.time() < _quota_reset_at:
         remaining = _quota_remaining_str(_quota_reset_at)
@@ -1246,6 +1495,9 @@ async def on_message(message: discord.Message):
         old_poller = _bg_pollers.pop(channel_id, None)
         if old_poller:
             old_poller.cancel()
+        old_compact = _compact_tasks.pop(channel_id, None)
+        if old_compact:
+            old_compact.cancel()
         old_kb = _kb_extract_tasks.pop(channel_id, None)
         if old_kb:
             old_kb.cancel()
@@ -1262,6 +1514,11 @@ async def on_message(message: discord.Message):
     # ── Dominion Curiosity commands ───────────────────────────────────────────
     if user_text.lower().startswith(("/curiosity", "/inquirer")):
         await _handle_curiosity_command(message.channel, user_text)
+        return
+
+    # ── Dominion Routine commands ─────────────────────────────────────────────
+    if user_text.lower().startswith(("/routine", "/routines")):
+        await _handle_routine_command(message.channel, user_text)
         return
 
     # ── Reply context injection ───────────────────────────────────────────────
@@ -1299,10 +1556,13 @@ async def on_message(message: discord.Message):
     if channel_id in pending:
         choice = message.content.strip().lower()
         p = pending.pop(channel_id)
-        if choice in ("n", "new", "fresh", "reset"):
+        if choice in ("n", "new", "fresh"):
             old_s = sessions.pop(channel_id, None)
             save_sessions(sessions)
             await _update_presence()
+            old_compact = _compact_tasks.pop(channel_id, None)
+            if old_compact:
+                old_compact.cancel()
             old_kb = _kb_extract_tasks.pop(channel_id, None)
             if old_kb:
                 old_kb.cancel()

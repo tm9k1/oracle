@@ -319,5 +319,7 @@ class ClaudeCliBackend(BaseAIBackend):
                 break
         return tokens_used / context_window if context_window else 0.0
 
-    async def compact(self, session_id: str) -> Optional[BackendResult]:
+    async def compact(
+        self, session_id: str, system_prompt: Optional[str] = None
+    ) -> Optional[BackendResult]:
         return await self.run_turn("/compact", session_id=session_id)

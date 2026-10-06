@@ -140,8 +140,8 @@ class AgyBackend(BaseAIBackend):
         if proc.returncode != 0:
             err_msg = stderr or stdout or f"exit code {proc.returncode}"
             log.error("agy json failed (exit %d): %s", proc.returncode, err_msg[:400])
-            if session_id and "not found" in err_msg.lower():
-                log.warning("session %s not found in agy, retrying fresh", session_id)
+            if session_id and ("not found" in err_msg.lower() or "subscriber fell behind" in err_msg.lower()):
+                log.warning("session %s unusable in agy (%s), retrying fresh", session_id, err_msg[:200])
                 return await self.run_turn(prompt, session_id=None, system_prompt=system_prompt)
             return BackendResult(
                 result="",
@@ -324,6 +324,17 @@ class AgyBackend(BaseAIBackend):
                     periodic_status_callback=periodic_status_callback,
                     _is_retry=True,
                 )
+            if session_id and is_transient and _is_retry:
+                log.warning("agy session %s repeatedly failed with stream error (%s), falling back to fresh session", session_id, stderr[:200])
+                return await self.stream_turn(
+                    prompt=prompt,
+                    session_id=None,
+                    system_prompt=system_prompt,
+                    on_text_delta=on_text_delta,
+                    on_activity=on_activity,
+                    periodic_status_callback=periodic_status_callback,
+                    _is_retry=False,
+                )
             raise RuntimeError(f"agy exit {proc.returncode}: {stderr[:400]}")
 
         final_text = state["text"].rstrip()
@@ -367,6 +378,91 @@ class AgyBackend(BaseAIBackend):
         input_tokens = usage.get("input_tokens", 0)
         return input_tokens / context_window if context_window else 0.0
 
-    async def compact(self, session_id: str) -> Optional[BackendResult]:
-        """Send /compact command into agy conversation."""
-        return await self.run_turn("/compact", session_id=session_id)
+    def _fallback_transcript_summary(self, session_id: str, max_chars: int = 12000) -> str:
+        """Extract recent conversation turns from transcript.jsonl as context summary fallback."""
+        tpath = Path(f"/home/tm9k1/.gemini/antigravity-cli/brain/{session_id}/.system_generated/logs/transcript.jsonl")
+        if not tpath.exists():
+            return ""
+        turns = []
+        try:
+            with open(tpath, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        step = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    source = step.get("source")
+                    stype = step.get("type")
+                    content = step.get("content", "")
+                    if not content or not isinstance(content, str):
+                        continue
+                    content = re.sub(r"\[SYSTEM INSTRUCTIONS\].*?\[END SYSTEM INSTRUCTIONS\]", "", content, flags=re.DOTALL)
+                    content = re.sub(r"<USER_REQUEST>", "", content)
+                    content = re.sub(r"</USER_REQUEST>", "", content)
+                    content = content.strip()
+                    if not content:
+                        continue
+                    if source == "USER_EXPLICIT" or stype == "USER_INPUT":
+                        turns.append(f"User: {content[:1000]}")
+                    elif source == "MODEL" and stype == "PLANNER_RESPONSE":
+                        turns.append(f"Oracle: {content[:1000]}")
+        except Exception as e:
+            log.warning("Error reading transcript for compaction fallback: %s", e)
+            return ""
+
+        if not turns:
+            return ""
+        recent = turns[-15:]
+        summary_text = "\n\n".join(recent)
+        if len(summary_text) > max_chars:
+            summary_text = summary_text[-max_chars:]
+        return f"Recent conversation excerpt:\n{summary_text}"
+
+    async def compact(
+        self, session_id: str, system_prompt: Optional[str] = None
+    ) -> Optional[BackendResult]:
+        """
+        Compact an agy session:
+        1. Request a high-density summary of active state and decisions from the current session.
+        2. Fall back to transcript extraction if session is already unresponsive/stalled.
+        3. Seed a fresh session (session_id=None) with the summary context.
+        4. Return the new session's BackendResult.
+        """
+        log.info("Starting agy session compaction for %s", session_id[:8])
+        summary = ""
+        summary_prompt = (
+            "Please provide a concise, high-density summary of our conversation so far for seamless context transfer into a fresh session. "
+            "Cover: active tasks and their state, key decisions made, user preferences or feedback expressed, and any pending items or questions. "
+            "Output only the concise summary without conversational filler or greetings."
+        )
+
+        try:
+            res = await self.run_turn(summary_prompt, session_id=session_id)
+            if res and res.success and res.result:
+                summary = res.result.strip()
+        except Exception as e:
+            log.warning("Failed to get conversational summary from session %s: %s", session_id[:8], e)
+
+        if not summary:
+            log.info("Falling back to transcript extraction for session %s", session_id[:8])
+            summary = self._fallback_transcript_summary(session_id)
+
+        init_prompt = (
+            "[PRIOR CONVERSATION CONTEXT SUMMARY]\n"
+            f"{summary or 'Previous session was compacted. Ready for new instructions.'}\n\n"
+            "[DIRECTIVE]\n"
+            "Acknowledge receipt in one short sentence (e.g. 'Prior context loaded. Ready to continue.') to initialize this fresh session."
+        )
+
+        try:
+            new_res = await self.run_turn(init_prompt, session_id=None, system_prompt=system_prompt)
+            if new_res and new_res.session_id:
+                log.info("Compacted session %s into fresh session %s", session_id[:8], new_res.session_id[:8])
+                return new_res
+        except Exception as e:
+            log.error("Failed to initialize new session during compaction: %s", e)
+
+        return None

@@ -9,6 +9,7 @@ venv/
 # Secrets & Environment (CRITICAL)
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 
@@ -17,6 +18,8 @@ sessions.json
 sessions/
 curiosity_state.json
 dispatches_sent.json
+routine_state.json
+.restart_pending
 last_changes.txt
 logs/
 *.log
