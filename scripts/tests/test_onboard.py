@@ -94,6 +94,15 @@ class TestOnboard(unittest.TestCase):
         self.assertEqual(backend, "agy")
         self.assertEqual(model, "gemini-3.8-flash-high")
 
+    def test_generate_windows_scripts(self):
+        bat, ps1 = onboard.generate_windows_scripts()
+        self.assertTrue(bat.exists())
+        self.assertTrue(ps1.exists())
+        bat_txt = bat.read_text(encoding="utf-8")
+        ps1_txt = ps1.read_text(encoding="utf-8")
+        self.assertIn("oracle_bot.py", bat_txt)
+        self.assertIn("oracle_bot.py", ps1_txt)
+
 
 if __name__ == "__main__":
     unittest.main()

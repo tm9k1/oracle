@@ -42,11 +42,21 @@ def prompt_yes_no(prompt: str, default_yes: bool = True) -> bool:
 
 
 def find_binary(name: str) -> Optional[str]:
-    """Search for a binary in PATH or ~/.local/bin."""
-    home_bin = Path.home() / ".local/bin" / name
-    if home_bin.exists():
-        return str(home_bin)
-    return shutil.which(name)
+    """Search for a binary in PATH, ~/.local/bin, or Windows npm/app dirs."""
+    found = shutil.which(name)
+    if found:
+        return found
+    candidates = [
+        Path.home() / ".local" / "bin" / name,
+        Path.home() / ".local" / "bin" / f"{name}.exe",
+        Path.home() / ".local" / "bin" / f"{name}.cmd",
+        Path.home() / "AppData" / "Roaming" / "npm" / f"{name}.cmd",
+        Path.home() / "AppData" / "Local" / "Programs" / name / f"{name}.exe",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
 
 
 def init_starter_kb(target_dir: Path) -> None:
@@ -165,7 +175,10 @@ def setup_env_credentials(token: Optional[str] = None, interactive: bool = True)
 
     content = f"# Oracle Discord Bot Environment Configuration\nDISCORD_TOKEN={token}\nANTHROPIC_API_KEY=\n"
     ENV_FILE.write_text(content, encoding="utf-8")
-    os.chmod(ENV_FILE, 0o600)
+    try:
+        os.chmod(ENV_FILE, 0o600)
+    except Exception:
+        pass
     print("✓ Environment file saved: .env")
 
 
@@ -213,8 +226,70 @@ def update_config_file(
     print(f"✓ Configuration saved: config.json (KB: '{vault_name}' at {vault_path})")
 
 
+def generate_windows_scripts() -> tuple[Path, Path]:
+    """Generate run_oracle.bat and start_oracle.ps1 in repository root."""
+    bat_content = """@echo off
+setlocal enabledelayedexpansion
+cd /d "%~dp0"
+title Oracle Discord Bot
+
+echo ======================================================
+echo           🔮 Starting Oracle Discord Bot
+echo ======================================================
+
+if exist .venv\\Scripts\\python.exe (
+    set "PYTHON_EXE=.venv\\Scripts\\python.exe"
+) else if exist .venv\\bin\\python (
+    set "PYTHON_EXE=.venv\\bin\\python"
+) else (
+    set "PYTHON_EXE=python"
+)
+
+echo Using Python: !PYTHON_EXE!
+"!PYTHON_EXE!" scripts\\oracle_bot.py
+
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo Oracle exited with error code %ERRORLEVEL%.
+    pause
+)
+"""
+    ps1_content = """# Oracle Discord Bot Startup Script (PowerShell)
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $ScriptDir
+
+Write-Host "======================================================" -ForegroundColor Cyan
+Write-Host "          🔮 Starting Oracle Discord Bot             " -ForegroundColor Cyan
+Write-Host "======================================================" -ForegroundColor Cyan
+
+$PythonExe = if (Test-Path "$ScriptDir\\.venv\\Scripts\\python.exe") {
+    "$ScriptDir\\.venv\\Scripts\\python.exe"
+} elseif (Test-Path "$ScriptDir\\.venv\\bin\\python") {
+    "$ScriptDir\\.venv\\bin\\python"
+} else {
+    "python"
+}
+
+Write-Host "Using Python: $PythonExe" -ForegroundColor Green
+& $PythonExe "$ScriptDir\\scripts\\oracle_bot.py"
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "`nOracle exited with error code $LASTEXITCODE." -ForegroundColor Red
+}
+"""
+    bat_file = AI_DIR / "run_oracle.bat"
+    ps1_file = AI_DIR / "start_oracle.ps1"
+    bat_file.write_text(bat_content, encoding="utf-8")
+    ps1_file.write_text(ps1_content, encoding="utf-8")
+    print(f"✓ Created Windows startup scripts: {bat_file.name}, {ps1_file.name}")
+    return bat_file, ps1_file
+
+
 def generate_systemd_service(install: bool = False, interactive: bool = True) -> Optional[Path]:
     """Generate systemd user service file tailored to current environment."""
+    if sys.platform == "win32":
+        return None
+
     service_content = f"""[Unit]
 Description=Oracle Discord Bot (modular AI backend)
 After=network-online.target
@@ -335,8 +410,12 @@ def main():
     (AI_DIR / "logs").mkdir(parents=True, exist_ok=True)
     (AI_DIR / "downloads" / "attachments").mkdir(parents=True, exist_ok=True)
 
-    # 7. Systemd Service
-    service_path = generate_systemd_service(install=args.install_service, interactive=interactive)
+    # 7. Service / Startup Scripts
+    service_path = None
+    if sys.platform == "win32":
+        bat_file, ps1_file = generate_windows_scripts()
+    else:
+        service_path = generate_systemd_service(install=args.install_service, interactive=interactive)
 
     # 8. Run verification tests
     if not args.skip_tests:
@@ -350,13 +429,21 @@ def main():
     print(f"• AI Backend:     {backend} ({model})")
     print(f"• Operator:       {user_name}")
     print("\nNext Steps:")
-    print("1. Start Oracle interactively:")
-    print(f"   {sys.executable} scripts/oracle_bot.py")
-    if service_path:
-        print("\n2. Or enable and start via systemd:")
-        print("   systemctl --user daemon-reload")
-        print("   systemctl --user enable --now oracle-discord")
-        print("   journalctl --user -u oracle-discord -f")
+    if sys.platform == "win32":
+        print("1. Start Oracle from CMD or PowerShell:")
+        print("   .\\run_oracle.bat")
+        print("   or")
+        print("   .\\start_oracle.ps1")
+        print("\n2. To run automatically on login, place a shortcut to run_oracle.bat in your Startup folder:")
+        print("   Press Win+R -> type 'shell:startup' -> paste shortcut to run_oracle.bat")
+    else:
+        print("1. Start Oracle interactively:")
+        print(f"   {sys.executable} scripts/oracle_bot.py")
+        if service_path:
+            print("\n2. Or enable and start via systemd:")
+            print("   systemctl --user daemon-reload")
+            print("   systemctl --user enable --now oracle-discord")
+            print("   journalctl --user -u oracle-discord -f")
     print("\n3. Send a message to your bot on Discord!")
     print("=" * 60)
 

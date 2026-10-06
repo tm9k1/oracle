@@ -13,6 +13,7 @@ Oracle is designed to be completely knowledge-base agnostic. You can connect it 
 
 Oracle includes an interactive onboarding wizard that detects your environment, configures credentials, links your notes directory, and sets up background systemd services.
 
+### Linux / macOS
 ```bash
 # 1. Clone the repository
 git clone git@github.com:tm9k1/oracle.git ~/.ai
@@ -27,13 +28,28 @@ pip install -r scripts/requirements.txt
 python3 scripts/onboard.py
 ```
 
+### Windows (PowerShell or CMD)
+```powershell
+# 1. Clone the repository
+git clone git@github.com:tm9k1/oracle.git oracle
+cd oracle
+
+# 2. Set up virtual environment and dependencies
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r scripts\requirements.txt
+
+# 3. Run the onboarding wizard
+python scripts\onboard.py
+```
+
 The wizard will interactively:
 1. Ask for your name / operator handle.
-2. Ask for the path to your notes (or offer to create a new starter knowledge base).
+2. Ask for the path to your notes (e.g. `C:\Users\Alice\Obsidian\Vault` or `~/notes`, or offer to create a new starter knowledge base).
 3. Detect available AI backends (`agy` / Antigravity CLI or `claude` / Anthropic Claude Code CLI).
-4. Prompt for your Discord Bot Token (saving safely to `.env` with `0600` permissions).
+4. Prompt for your Discord Bot Token (saving safely to `.env`).
 5. Update `config.json` with your paths and preferences.
-6. Install the systemd user service so Oracle runs automatically in the background.
+6. Generate systemd user services (Linux) or Windows batch/PowerShell launchers (`run_oracle.bat`, `start_oracle.ps1`).
 7. Run the verification test suite to confirm everything works.
 
 ---
@@ -120,23 +136,34 @@ your-vault/
 
 ## 🚀 Running Oracle
 
-### Interactive Mode
+### Linux / macOS
 ```bash
+# Interactive
 source .venv/bin/activate
 python3 scripts/oracle_bot.py
-```
 
-### Background Daemon (systemd)
-```bash
-# Reload user daemon and start service
+# Or background daemon via systemd
 systemctl --user daemon-reload
 systemctl --user enable --now oracle-discord
 
 # Check live logs
 journalctl --user -u oracle-discord -f
-# or inspect file logs
 tail -f logs/oracle_bot.log
 ```
+
+### Windows (CMD or PowerShell)
+```cmd
+:: Quick launch (batch script)
+run_oracle.bat
+
+:: Or PowerShell
+.\start_oracle.ps1
+```
+
+**Run on Windows Startup automatically:**
+1. Press `Win + R`, type `shell:startup`, and press Enter.
+2. Create a shortcut to `run_oracle.bat` and paste it into the Startup folder.
+3. Oracle will now automatically start in the background upon login!
 
 ---
 

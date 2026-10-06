@@ -11,6 +11,7 @@ import os
 import re
 import signal
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime
@@ -18,6 +19,12 @@ from pathlib import Path
 from typing import Optional
 
 import discord
+
+def _get_home_slug() -> str:
+    return str(Path.home()).replace("\\", "-").replace("/", "-").replace(":", "")
+
+def _get_uid_str() -> str:
+    return str(getattr(os, "getuid", lambda: 1000)())
 
 # Add scripts directory to sys.path for local imports
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -44,7 +51,7 @@ ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 def load_config() -> dict:
     if CONFIG_FILE.exists():
         try:
-            return json.loads(CONFIG_FILE.read_text())
+            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         except Exception:
             return {}
     return {}
@@ -54,7 +61,7 @@ def load_env() -> dict:
     env = {}
     if env_file.exists():
         try:
-            for line in env_file.read_text().splitlines():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
                 if "=" in line and not line.strip().startswith("#"):
                     k, _, v = line.partition("=")
                     env[k.strip()] = v.strip()
@@ -191,14 +198,14 @@ curiosity_engine = CuriosityEngine()
 def load_sessions() -> dict:
     if SESSIONS_FILE.exists():
         try:
-            return json.loads(SESSIONS_FILE.read_text())
+            return json.loads(SESSIONS_FILE.read_text(encoding="utf-8"))
         except Exception:
             return {}
     return {}
 
 def save_sessions(sessions_dict: dict):
     try:
-        SESSIONS_FILE.write_text(json.dumps(sessions_dict, indent=2))
+        SESSIONS_FILE.write_text(json.dumps(sessions_dict, indent=2), encoding="utf-8")
     except Exception as e:
         log.error("Failed to save sessions: %s", e)
 
@@ -491,13 +498,17 @@ def _transcript_path(session_id: str) -> Optional[str]:
     if agy_path.exists():
         return str(agy_path)
     # claude path
-    home_slug = str(Path.home()).replace("/", "-")
-    claude_path = Path.home() / f".claude/projects/{home_slug}/{session_id}.jsonl"
-    if claude_path.exists():
-        return str(claude_path)
-    tmp_path = Path(f"/tmp/claude-{os.getuid()}/{home_slug}/{session_id}.jsonl")
-    if tmp_path.exists():
-        return str(tmp_path)
+    slug = _get_home_slug()
+    uid = _get_uid_str()
+    candidates = [
+        Path.home() / f".claude/projects/{slug}/{session_id}.jsonl",
+        Path(f"/tmp/claude-{uid}/{slug}/{session_id}.jsonl"),
+        Path(tempfile.gettempdir()) / f"claude-{uid}" / slug / f"{session_id}.jsonl",
+        Path(tempfile.gettempdir()) / "claude" / slug / f"{session_id}.jsonl",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
     return None
 
 def _task_mtimes(session_id: str) -> dict:
@@ -511,12 +522,18 @@ def _task_mtimes(session_id: str) -> dict:
             if f.exists():
                 mtimes[str(f)] = f.stat().st_mtime
     # claude tasks
-    home_slug = str(Path.home()).replace("/", "-")
-    claude_task_dir = Path(f"/tmp/claude-{os.getuid()}/{home_slug}/{session_id}/tasks")
-    if claude_task_dir.exists():
-        for f in claude_task_dir.glob("*.output"):
-            if f.exists():
-                mtimes[str(f)] = f.stat().st_mtime
+    slug = _get_home_slug()
+    uid = _get_uid_str()
+    candidate_task_dirs = [
+        Path(f"/tmp/claude-{uid}/{slug}/{session_id}/tasks"),
+        Path(tempfile.gettempdir()) / f"claude-{uid}" / slug / session_id / "tasks",
+        Path(tempfile.gettempdir()) / "claude" / slug / session_id / "tasks",
+    ]
+    for ctd in candidate_task_dirs:
+        if ctd.exists():
+            for f in ctd.glob("*.output"):
+                if f.exists():
+                    mtimes[str(f)] = f.stat().st_mtime
     return mtimes
 
 async def _poll_background_tasks(channel, channel_id: str, session_id: str):
@@ -985,13 +1002,17 @@ def _get_transcript_path(session_id: str) -> Optional[Path]:
     agy_path = Path.home() / f".gemini/antigravity-cli/brain/{session_id}/.system_generated/logs/transcript.jsonl"
     if agy_path.exists():
         return agy_path
-    home_slug = str(Path.home()).replace("/", "-")
-    tmp_path = Path(f"/tmp/claude-{os.getuid()}/{home_slug}/{session_id}.jsonl")
-    if tmp_path.exists():
-        return tmp_path
-    claude_path = Path.home() / f".claude/projects/{home_slug}/{session_id}.jsonl"
-    if claude_path.exists():
-        return claude_path
+    slug = _get_home_slug()
+    uid = _get_uid_str()
+    candidates = [
+        Path.home() / f".claude/projects/{slug}/{session_id}.jsonl",
+        Path(f"/tmp/claude-{uid}/{slug}/{session_id}.jsonl"),
+        Path(tempfile.gettempdir()) / f"claude-{uid}" / slug / f"{session_id}.jsonl",
+        Path(tempfile.gettempdir()) / "claude" / slug / f"{session_id}.jsonl",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
     return None
 
 
@@ -1129,7 +1150,7 @@ async def _handle_safe_word_restart(message: discord.Message, channel_id: str):
             "author": str(message.author),
             "timestamp": time.time(),
             "reason": "safe_word_reset",
-        }))
+        }), encoding="utf-8")
     except Exception as e:
         log.error("Failed to write restart pending file: %s", e)
 
@@ -1396,9 +1417,9 @@ async def on_ready():
             log.error("startup AI backend test failed: %s", ce)
             return
 
-        last_changes = LAST_CHANGES_FILE.read_text() if LAST_CHANGES_FILE.exists() else ""
+        last_changes = LAST_CHANGES_FILE.read_text(encoding="utf-8") if LAST_CHANGES_FILE.exists() else ""
         if CHANGES != last_changes:
-            LAST_CHANGES_FILE.write_text(CHANGES)
+            LAST_CHANGES_FILE.write_text(CHANGES, encoding="utf-8")
 
         await _update_presence(discord.Status.online)
         await _resume_interrupted()
@@ -1406,7 +1427,7 @@ async def on_ready():
         # Check for safe-word restart pending marker
         if RESTART_PENDING_FILE.exists():
             try:
-                rdata = json.loads(RESTART_PENDING_FILE.read_text())
+                rdata = json.loads(RESTART_PENDING_FILE.read_text(encoding="utf-8"))
                 RESTART_PENDING_FILE.unlink(missing_ok=True)
                 r_cid = rdata.get("channel_id")
                 if r_cid:
@@ -1623,7 +1644,7 @@ if __name__ == "__main__":
     env: dict[str, str] = {}
     env_file = AI_DIR / ".env"
     if env_file.exists():
-        for line in env_file.read_text().splitlines():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
             if "=" in line and not line.startswith("#"):
                 k, _, v = line.partition("=")
                 env[k.strip()] = v.strip()

@@ -21,7 +21,7 @@ def _get_vault_dir() -> Path:
     cfg_path = KB_DIR / "config.json"
     if cfg_path.exists():
         try:
-            cfg = json.loads(cfg_path.read_text())
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
             vpath = cfg.get("kb", {}).get("vault_path")
             if vpath and Path(vpath).exists():
                 return Path(vpath)
@@ -130,7 +130,7 @@ def retrieve_context(query: str, top_k: int = 6) -> list[dict]:
     results = []
     for path in get_all_documents():
         try:
-            text = path.read_text()
+            text = path.read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
 
@@ -169,7 +169,7 @@ def get_core_context(max_chars: int = 12000) -> str:
 
     def _load(path: Path, label: str):
         try:
-            text = path.read_text()
+            text = path.read_text(encoding="utf-8", errors="replace")
             _, body = parse_frontmatter(text)
             return f"## {label}\n{body}"
         except Exception:

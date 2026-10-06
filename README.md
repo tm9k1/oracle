@@ -41,6 +41,8 @@ Oracle is an always-on, intelligent interface and operational bridge to [Dominio
 ├── .env.example                # Template for environment variables and secrets
 ├── routines.json               # Configured recurring daily schedules
 ├── .gitignore                  # Git exclusions (runtime state, sessions, .env)
+├── run_oracle.bat              # One-click Windows startup script
+├── start_oracle.ps1            # PowerShell startup script
 │
 ├── IDENTITY.md                 # Executive assistant persona definition
 ├── SOUL.md                     # Knowledge base discipline & privacy rules
@@ -90,11 +92,13 @@ Oracle is an always-on, intelligent interface and operational bridge to [Dominio
 
 ## ⚡ Quickstart: Onboarding Any Knowledge Base
 
-Oracle is knowledge-base agnostic. You can link your existing **Obsidian vault**, **Logseq folder**, **Markdown notes**, or initialize a new one in seconds using the onboarding wizard.
+Oracle is knowledge-base agnostic and runs cross-platform on **Linux**, **macOS**, and **Windows**. You can link your existing **Obsidian vault**, **Logseq folder**, **Markdown notes**, or initialize a new one in seconds using the onboarding wizard.
 
 See the full **[Onboarding Guide](file:///home/tm9k1/.ai/ONBOARDING.md)** for detailed walkthroughs.
 
 ### 1. Interactive 3-Minute Setup
+
+**Linux / macOS:**
 ```bash
 git clone git@github.com:tm9k1/oracle.git ~/.ai
 cd ~/.ai
@@ -106,12 +110,24 @@ pip install -r scripts/requirements.txt
 python3 scripts/onboard.py
 ```
 
+**Windows (PowerShell or CMD):**
+```powershell
+git clone git@github.com:tm9k1/oracle.git oracle
+cd oracle
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r scripts\requirements.txt
+
+# Run the interactive onboarding wizard
+python scripts\onboard.py
+```
+
 The wizard prompts for:
 - Your operator handle
-- Knowledge base path (connect an existing vault or create one from `templates/starter_kb/`)
+- Knowledge base path (e.g. `C:\Users\Alice\Obsidian\Vault` or `~/notes`)
 - AI backend (`agy` with Gemini or `claude_cli` with Claude)
 - Discord Bot Token
-- Optional automatic systemd user service installation
+- Background launch setup (systemd unit on Linux, or `run_oracle.bat` on Windows)
 
 ### 2. Scripted / Headless Setup
 ```bash

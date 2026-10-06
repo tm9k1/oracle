@@ -27,7 +27,7 @@ def _get_inbox_dir() -> Path:
     cfg_path = KB_DIR / "config.json"
     if cfg_path.exists():
         try:
-            cfg = json.loads(cfg_path.read_text())
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
             vpath = cfg.get("kb", {}).get("vault_path")
             if vpath:
                 vp = Path(vpath)
@@ -52,7 +52,7 @@ log_path = log_dir / "update_kb.log"
 
 def log(msg: str) -> None:
     today = date.today().isoformat()
-    with open(log_path, "a") as f:
+    with open(log_path, "a", encoding="utf-8") as f:
         f.write(f"[{today}] {msg}\n")
 
 
@@ -60,7 +60,7 @@ def load_config() -> dict:
     cfg_path = KB_DIR / "config.json"
     if cfg_path.exists():
         try:
-            return json.loads(cfg_path.read_text())
+            return json.loads(cfg_path.read_text(encoding="utf-8"))
         except Exception:
             return {}
     return {}
@@ -73,7 +73,7 @@ def read_transcript(transcript_path: str) -> str:
         return ""
     lines = []
     try:
-        for raw in path.read_text(errors="replace").splitlines():
+        for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
             raw = raw.strip()
             if not raw:
                 continue
@@ -193,7 +193,7 @@ discards the rest, then deletes this file. See `mind/inbox/README.md`.
 
 ## Context updates — projects / infra
 {_fmt_items(insights.get("context_updates"))}
-""")
+""", encoding="utf-8")
     log(f"staged insights → {path}")
     return path
 

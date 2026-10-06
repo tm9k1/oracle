@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -25,24 +26,25 @@ _VSCODE_BUCKET = Path.home() / f".claude/projects/{_HOME_SLUG}-docker-compose-fi
 def _find_claude(custom_path: Optional[str] = None) -> str:
     if custom_path and Path(custom_path).exists():
         return custom_path
+    found = shutil.which("claude")
+    if found:
+        return found
     candidates = [
         str(Path.home() / ".local/bin/claude"),
+        str(Path.home() / ".local/bin/claude.exe"),
+        str(Path.home() / ".local/bin/claude.cmd"),
+        str(Path.home() / "AppData/Roaming/npm/claude.cmd"),
         "/usr/local/bin/claude",
         "/usr/bin/claude",
     ]
     for p in candidates:
         if Path(p).exists():
             return p
-    exts = sorted(
-        (Path.home() / ".vscode-server/extensions").glob(
-            "anthropic.claude-code-*/resources/native-binary/claude"
-        )
-    )
-    if exts:
-        return str(exts[-1])
-    found = shutil.which("claude")
-    if found:
-        return found
+    for ext_root in [Path.home() / ".vscode-server/extensions", Path.home() / ".vscode/extensions"]:
+        if ext_root.exists():
+            exts = sorted(ext_root.glob("anthropic.claude-code-*/resources/native-binary/claude*"))
+            if exts:
+                return str(exts[-1])
     raise RuntimeError("claude binary not found in PATH or standard locations")
 
 
@@ -93,7 +95,8 @@ class ClaudeCliBackend(BaseAIBackend):
         system_prompt: Optional[str] = None,
         output_format: str = "stream-json",
     ) -> list[str]:
-        cmd = [
+        add_dir = str(Path.home().anchor) if (sys.platform == "win32" and Path.home().anchor) else "/"
+        base_cmd = [
             self.binary,
             "-p",
             prompt,
@@ -103,16 +106,19 @@ class ClaudeCliBackend(BaseAIBackend):
             self.model or DEFAULT_MODEL,
             "--dangerously-skip-permissions",
             "--add-dir",
-            "/",
+            add_dir,
         ]
         if output_format == "stream-json":
-            cmd.append("--verbose")
+            base_cmd.append("--verbose")
 
         if session_id:
-            cmd.extend(["--resume", session_id])
+            base_cmd.extend(["--resume", session_id])
         elif system_prompt:
-            cmd.extend(["--append-system-prompt", system_prompt])
-        return cmd
+            base_cmd.extend(["--append-system-prompt", system_prompt])
+
+        if sys.platform == "win32" and self.binary.lower().endswith((".cmd", ".bat")):
+            return ["cmd.exe", "/c"] + base_cmd
+        return base_cmd
 
     async def startup_test(self) -> BackendResult:
         return await self.run_turn("reply with just the word: ready", session_id=None)

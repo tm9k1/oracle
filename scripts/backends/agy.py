@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -23,17 +24,20 @@ DEFAULT_EFFORT = "high"
 def _find_agy(custom_path: Optional[str] = None) -> str:
     if custom_path and Path(custom_path).exists():
         return custom_path
+    found = shutil.which("agy")
+    if found:
+        return found
     candidates = [
         str(Path.home() / ".local/bin/agy"),
+        str(Path.home() / ".local/bin/agy.exe"),
+        str(Path.home() / ".local/bin/agy.cmd"),
+        str(Path.home() / "AppData/Roaming/npm/agy.cmd"),
         "/usr/local/bin/agy",
         "/usr/bin/agy",
     ]
     for c in candidates:
         if Path(c).exists():
             return c
-    found = shutil.which("agy")
-    if found:
-        return found
     raise RuntimeError("agy binary not found in PATH or standard locations")
 
 
@@ -70,7 +74,8 @@ class AgyBackend(BaseAIBackend):
         session_id: Optional[str] = None,
         output_format: str = "stream-json",
     ) -> list[str]:
-        cmd = [
+        add_dir = str(Path.home().anchor) if (sys.platform == "win32" and Path.home().anchor) else "/"
+        base_cmd = [
             self.binary,
             "-p",
             prompt,
@@ -78,15 +83,18 @@ class AgyBackend(BaseAIBackend):
             output_format,
             "--dangerously-skip-permissions",
             "--add-dir",
-            "/",
+            add_dir,
         ]
         if self.model:
-            cmd.extend(["--model", self.model])
+            base_cmd.extend(["--model", self.model])
         if self.effort:
-            cmd.extend(["--effort", self.effort])
+            base_cmd.extend(["--effort", self.effort])
         if session_id:
-            cmd.extend(["--conversation", session_id])
-        return cmd
+            base_cmd.extend(["--conversation", session_id])
+
+        if sys.platform == "win32" and self.binary.lower().endswith((".cmd", ".bat")):
+            return ["cmd.exe", "/c"] + base_cmd
+        return base_cmd
 
     def _prepare_prompt(
         self,
