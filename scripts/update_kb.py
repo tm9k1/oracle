@@ -12,16 +12,38 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
-KB_DIR = Path("/home/tm9k1/.ai")
+KB_DIR = Path(os.environ.get("ORACLE_DIR") or Path(__file__).resolve().parent.parent)
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from backends.base import BaseAIBackend
 
-# Dominion staging inbox — auto-extracted insights land here as 'pending-review'
-# notes for a steward to vet and promote (Constitution Article XII).
-DOMINION_INBOX = Path("/mnt/hdd/notes/Dominion/mind/inbox")
+
+def _get_inbox_dir() -> Path:
+    env_inbox = os.environ.get("KB_INBOX_DIR")
+    if env_inbox:
+        return Path(env_inbox)
+    cfg_path = KB_DIR / "config.json"
+    if cfg_path.exists():
+        try:
+            cfg = json.loads(cfg_path.read_text())
+            vpath = cfg.get("kb", {}).get("vault_path")
+            if vpath:
+                vp = Path(vpath)
+                if (vp / "mind" / "inbox").exists():
+                    return vp / "mind" / "inbox"
+                if (vp / "inbox").exists():
+                    return vp / "inbox"
+                return vp / "inbox"
+        except Exception:
+            pass
+    if Path("/mnt/hdd/notes/Dominion/mind/inbox").exists():
+        return Path("/mnt/hdd/notes/Dominion/mind/inbox")
+    return KB_DIR / "knowledge/inbox"
+
+
+DOMINION_INBOX = _get_inbox_dir()
 
 log_dir = KB_DIR / "logs"
 log_dir.mkdir(parents=True, exist_ok=True)

@@ -26,11 +26,32 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import os
 log = logging.getLogger("curiosity_engine")
 
-DOMINION_DEFAULT_ROOT = Path("/mnt/hdd/notes/Dominion")
-DEFAULT_STATE_FILE = Path("/home/tm9k1/.ai/curiosity_state.json")
-DEFAULT_CONFIG_FILE = Path("/home/tm9k1/.ai/config.json")
+AI_DIR = Path(os.environ.get("ORACLE_DIR") or Path(__file__).resolve().parent.parent)
+DEFAULT_STATE_FILE = AI_DIR / "curiosity_state.json"
+DEFAULT_CONFIG_FILE = AI_DIR / "config.json"
+
+
+def _get_default_vault_root() -> Path:
+    env_root = os.environ.get("KB_VAULT_PATH")
+    if env_root:
+        return Path(env_root)
+    if DEFAULT_CONFIG_FILE.exists():
+        try:
+            cfg = json.loads(DEFAULT_CONFIG_FILE.read_text(encoding="utf-8"))
+            vpath = cfg.get("kb", {}).get("vault_path")
+            if vpath and Path(vpath).exists():
+                return Path(vpath)
+        except Exception:
+            pass
+    if Path("/mnt/hdd/notes/Dominion").exists():
+        return Path("/mnt/hdd/notes/Dominion")
+    return AI_DIR / "knowledge"
+
+
+DOMINION_DEFAULT_ROOT = _get_default_vault_root()
 
 
 def clean_markdown_links(text: str) -> str:
@@ -547,7 +568,10 @@ class CuriosityEngine:
         config_path: Optional[Path] = None,
     ):
         self.dominion_root = Path(dominion_root or DOMINION_DEFAULT_ROOT)
-        self.inbox_dir = self.dominion_root / "mind" / "inbox"
+        if (self.dominion_root / "mind" / "inbox").exists() or (self.dominion_root / "mind").exists():
+            self.inbox_dir = self.dominion_root / "mind" / "inbox"
+        else:
+            self.inbox_dir = self.dominion_root / "inbox"
         self.state_path = Path(state_path or DEFAULT_STATE_FILE)
         self.config_path = Path(config_path or DEFAULT_CONFIG_FILE)
 

@@ -24,7 +24,7 @@ def _find_agy(custom_path: Optional[str] = None) -> str:
     if custom_path and Path(custom_path).exists():
         return custom_path
     candidates = [
-        "/home/tm9k1/.local/bin/agy",
+        str(Path.home() / ".local/bin/agy"),
         "/usr/local/bin/agy",
         "/usr/bin/agy",
     ]
@@ -45,7 +45,7 @@ class AgyBackend(BaseAIBackend):
         model: Optional[str] = None,
         effort: Optional[str] = None,
         agy_path: Optional[str] = None,
-        working_dir: str = "/home/tm9k1",
+        working_dir: Optional[str] = None,
         timeout_seconds: int = 1500,
         edit_interval: float = 5.0,
         **kwargs: Any,
@@ -365,7 +365,7 @@ class AgyBackend(BaseAIBackend):
 
         # Primary: Measure active transcript size on disk (bytes // 4 ~= tokens)
         if session_id:
-            tpath = Path(f"/home/tm9k1/.gemini/antigravity-cli/brain/{session_id}/.system_generated/logs/transcript.jsonl")
+            tpath = Path.home() / f".gemini/antigravity-cli/brain/{session_id}/.system_generated/logs/transcript.jsonl"
             if tpath.exists():
                 try:
                     approx_tokens = tpath.stat().st_size // 4
@@ -380,7 +380,7 @@ class AgyBackend(BaseAIBackend):
 
     def _fallback_transcript_summary(self, session_id: str, max_chars: int = 12000) -> str:
         """Extract recent conversation turns from transcript.jsonl as context summary fallback."""
-        tpath = Path(f"/home/tm9k1/.gemini/antigravity-cli/brain/{session_id}/.system_generated/logs/transcript.jsonl")
+        tpath = Path.home() / f".gemini/antigravity-cli/brain/{session_id}/.system_generated/logs/transcript.jsonl"
         if not tpath.exists():
             return ""
         turns = []

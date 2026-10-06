@@ -12,10 +12,12 @@ from pathlib import Path
 import sys
 from typing import Any, Dict, List, Optional
 
+import os
 log = logging.getLogger("oracle.routine_manager")
 
-DEFAULT_ROUTINES_FILE = Path("/home/tm9k1/.ai/routines.json")
-DEFAULT_STATE_FILE = Path("/home/tm9k1/.ai/routine_state.json")
+AI_DIR = Path(os.environ.get("ORACLE_DIR") or Path(__file__).resolve().parent.parent)
+DEFAULT_ROUTINES_FILE = AI_DIR / "routines.json"
+DEFAULT_STATE_FILE = AI_DIR / "routine_state.json"
 
 
 @dataclass

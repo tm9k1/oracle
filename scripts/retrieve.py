@@ -10,11 +10,29 @@ from pathlib import Path
 from datetime import datetime, date
 from typing import Optional
 
-KB_DIR = Path("/home/tm9k1/.ai")  # operational annex (homelab runbooks + Oracle's own store)
+import os
+KB_DIR = Path(os.environ.get("ORACLE_DIR") or Path(__file__).resolve().parent.parent)
 
-# Dominion — Authoritative AI knowledge base (synced vault on /mnt/hdd).
-# May be absent if the HDD isn't mounted; every read below degrades gracefully.
-DOMINION_DIR = Path("/mnt/hdd/notes/Dominion")
+
+def _get_vault_dir() -> Path:
+    env_vault = os.environ.get("KB_VAULT_PATH")
+    if env_vault:
+        return Path(env_vault)
+    cfg_path = KB_DIR / "config.json"
+    if cfg_path.exists():
+        try:
+            cfg = json.loads(cfg_path.read_text())
+            vpath = cfg.get("kb", {}).get("vault_path")
+            if vpath and Path(vpath).exists():
+                return Path(vpath)
+        except Exception:
+            pass
+    if Path("/mnt/hdd/notes/Dominion").exists():
+        return Path("/mnt/hdd/notes/Dominion")
+    return KB_DIR / "knowledge"
+
+
+DOMINION_DIR = _get_vault_dir()
 
 # ── Parsing ─────────────────────────────────────────────────────────────────
 
@@ -39,12 +57,20 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
 
 
 def get_all_documents() -> list[Path]:
-    """All searchable docs: Dominion (authoritative) + the operational annex."""
+    """All searchable docs: Authoritative vault + the operational annex."""
     docs = []
-    # Dominion: user context (mind/) + the entity graph (facts about the world).
+    # Vault: user context (mind/) + entity graph (facts), or general markdown hierarchy
     if DOMINION_DIR.exists():
-        docs.extend((DOMINION_DIR / "mind").glob("*.md"))
-        docs.extend((DOMINION_DIR / "entities").glob("*.md"))
+        found_structured = False
+        if (DOMINION_DIR / "mind").exists():
+            docs.extend((DOMINION_DIR / "mind").glob("*.md"))
+            found_structured = True
+        if (DOMINION_DIR / "entities").exists():
+            docs.extend((DOMINION_DIR / "entities").glob("*.md"))
+            found_structured = True
+        if not found_structured:
+            docs.extend(list(DOMINION_DIR.glob("**/*.md"))[:200])
+
     # Operational annex: earned patterns/mistakes, homelab runbooks, user stub.
     for subdir in ["stars", "scars", "context", "knowledge"]:
         docs.extend((KB_DIR / subdir).glob("*.md"))

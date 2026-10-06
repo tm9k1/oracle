@@ -3,6 +3,7 @@ Base interface and dataclasses for modular Oracle AI backends.
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 
@@ -38,12 +39,12 @@ class BaseAIBackend(ABC):
     def __init__(
         self,
         model: Optional[str] = None,
-        working_dir: str = "/home/tm9k1",
+        working_dir: Optional[str] = None,
         timeout_seconds: int = 1500,
         **kwargs: Any,
     ):
         self.model = model
-        self.working_dir = working_dir
+        self.working_dir = working_dir or str(Path.home())
         self.timeout_seconds = timeout_seconds
         self.extra_config = kwargs
 

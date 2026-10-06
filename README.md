@@ -47,8 +47,18 @@ Oracle is an always-on, intelligent interface and operational bridge to [Dominio
 ├── USER.md                     # Context pointer stub to Dominion
 ├── TOOLS.md                    # Environment and homelab tool notes
 ├── SETUP.md                    # Setup, systemd deployment, and runbook
+├── ONBOARDING.md               # Guide to linking any Obsidian/notes vault
+│
+├── templates/
+│   └── starter_kb/             # Ready-to-use template for new knowledge bases
+│       ├── README.md
+│       ├── DISPATCH.md
+│       ├── inbox/
+│       ├── entities/
+│       └── mind/
 │
 ├── scripts/
+│   ├── onboard.py              # Zero-friction interactive onboarding wizard
 │   ├── oracle_bot.py           # Core Discord bot engine & event loop
 │   ├── routine_manager.py      # Scheduled routine manager & CLI
 │   ├── dispatch_manager.py     # Cross-machine dispatch parser & alerter
@@ -71,51 +81,79 @@ Oracle is an always-on, intelligent interface and operational bridge to [Dominio
 │       ├── test_curiosity_engine.py
 │       ├── test_dispatch_conversation.py
 │       ├── test_dispatch_manager.py
+│       ├── test_onboard.py
 │       ├── test_oracle_bot.py
 │       └── test_routine_manager.py
 ```
 
 ---
 
-## 🚀 Quickstart & Setup
+## ⚡ Quickstart: Onboarding Any Knowledge Base
 
-### Prerequisites
-- Python 3.11+
-- [Antigravity CLI (`agy`)](https://github.com/google-deepmind/antigravity) or [Anthropic Claude CLI (`claude`)](https://github.com/anthropics/claude-code)
-- Discord Application & Bot Token
+Oracle is knowledge-base agnostic. You can link your existing **Obsidian vault**, **Logseq folder**, **Markdown notes**, or initialize a new one in seconds using the onboarding wizard.
 
-### Installation
+See the full **[Onboarding Guide](file:///home/tm9k1/.ai/ONBOARDING.md)** for detailed walkthroughs.
 
-1. **Clone and create virtual environment**:
-   ```bash
-   git clone git@github.com:tm9k1/oracle.git ~/.ai
-   cd ~/.ai
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r scripts/requirements.txt
-   ```
+### 1. Interactive 3-Minute Setup
+```bash
+git clone git@github.com:tm9k1/oracle.git ~/.ai
+cd ~/.ai
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r scripts/requirements.txt
 
-2. **Configure environment variables**:
+# Run the interactive onboarding wizard
+python3 scripts/onboard.py
+```
+
+The wizard prompts for:
+- Your operator handle
+- Knowledge base path (connect an existing vault or create one from `templates/starter_kb/`)
+- AI backend (`agy` with Gemini or `claude_cli` with Claude)
+- Discord Bot Token
+- Optional automatic systemd user service installation
+
+### 2. Scripted / Headless Setup
+```bash
+python3 scripts/onboard.py \
+  --non-interactive \
+  --user-name "Alice" \
+  --vault-path "~/Obsidian/MyVault" \
+  --vault-name "MyVault" \
+  --backend agy \
+  --discord-token "YOUR_DISCORD_BOT_TOKEN" \
+  --install-service
+```
+
+---
+
+## ⚙️ Manual Configuration & Deployment
+
+If you prefer configuring manually without the wizard:
+
+1. **Configure credentials**:
    ```bash
    cp .env.example .env
-   # Set your DISCORD_TOKEN in .env
+   # Edit DISCORD_TOKEN in .env
    ```
 
-3. **Tune AI configuration** (`config.json`):
+2. **Configure Knowledge Base & AI Model in `config.json`**:
    ```json
    {
      "ai": {
        "backend": "agy",
        "model": "gemini-3.8-flash-high",
-       "effort": "high",
-       "timeout_seconds": 1500,
-       "compact_threshold": 0.65,
-       "compact_idle_seconds": 180
+       "effort": "high"
+     },
+     "kb": {
+       "vault_path": "/path/to/your/notes",
+       "vault_name": "My Knowledge Base",
+       "inbox_rel_path": "inbox"
      }
    }
    ```
 
-4. **Run the bot**:
+3. **Start the bot**:
    ```bash
    python3 scripts/oracle_bot.py
    ```

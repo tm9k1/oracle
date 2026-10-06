@@ -16,10 +16,34 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import os
 log = logging.getLogger("oracle.dispatch")
 
-DEFAULT_DISPATCH_FILE = Path("/mnt/hdd/notes/Dominion/DISPATCH.md")
-STATE_FILE = Path("/home/tm9k1/.ai/dispatches_sent.json")
+AI_DIR = Path(os.environ.get("ORACLE_DIR") or Path(__file__).resolve().parent.parent)
+
+
+def _get_default_dispatch_file() -> Path:
+    env_file = os.environ.get("DISPATCH_FILE")
+    if env_file:
+        return Path(env_file)
+    cfg_file = AI_DIR / "config.json"
+    if cfg_file.exists():
+        try:
+            cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+            vpath = cfg.get("kb", {}).get("vault_path")
+            if vpath and (Path(vpath) / "DISPATCH.md").exists():
+                return Path(vpath) / "DISPATCH.md"
+        except Exception:
+            pass
+    if Path("/mnt/hdd/notes/Dominion/DISPATCH.md").exists():
+        return Path("/mnt/hdd/notes/Dominion/DISPATCH.md")
+    if (AI_DIR / "DISPATCH.md").exists():
+        return AI_DIR / "DISPATCH.md"
+    return AI_DIR / "knowledge/DISPATCH.md"
+
+
+DEFAULT_DISPATCH_FILE = _get_default_dispatch_file()
+STATE_FILE = AI_DIR / "dispatches_sent.json"
 
 
 @dataclass

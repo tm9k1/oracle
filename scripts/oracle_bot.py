@@ -29,7 +29,7 @@ from dispatch_manager import Dispatch, DispatchManager
 from curiosity_engine import CuriosityEngine, ActiveQuestion
 from routine_manager import Routine, RoutineManager
 
-AI_DIR = Path("/home/tm9k1/.ai")
+AI_DIR = Path(os.environ.get("ORACLE_DIR") or Path(__file__).resolve().parent.parent)
 CONFIG_FILE = AI_DIR / "config.json"
 SESSIONS_FILE = AI_DIR / "sessions.json"
 LAST_CHANGES_FILE = AI_DIR / "last_changes.txt"
@@ -205,27 +205,46 @@ def save_sessions(sessions_dict: dict):
 # ── System prompt ─────────────────────────────────────────────────────────────
 
 def _kb_system_prompt() -> str:
+    cfg = load_config()
+    kb_cfg = cfg.get("kb", {})
+    vault_str = os.environ.get("KB_VAULT_PATH") or kb_cfg.get("vault_path") or "/mnt/hdd/notes/Dominion"
+    vault_path = Path(vault_str)
+    vault_name = kb_cfg.get("vault_name") or ("Dominion" if "dominion" in str(vault_path).lower() else "Knowledge Base")
+    user_name = cfg.get("user", {}).get("name") or os.environ.get("USER") or "operator"
+
+    vault_instructions = ""
+    if vault_path.exists():
+        if vault_name.lower() == "dominion":
+            vault_instructions = (
+                f"Your AUTHORITATIVE knowledge base is Dominion — the synced vault at {vault_path}/. "
+                "Use it for anything about your operator, devices, finances, people, systems, preferences, or plans. "
+                "Boot order: read CONSTITUTION.md, then CORRECTIONS.md, PLANNING-CHAMBER.md, CENSUS.md; "
+                "personal preferences and feedback are in mind/, facts about the world are in entities/. "
+                "For deeper Dominion work invoke the `dominion` skill. "
+            )
+        else:
+            vault_instructions = (
+                f"Your AUTHORITATIVE knowledge base is {vault_name} — the vault at {vault_path}/. "
+                "Consult it for anything about your operator, notes, projects, preferences, or plans. "
+            )
+    else:
+        vault_instructions = f"Local knowledge base is located at {AI_DIR}/knowledge/. "
+
     return (
-        "You are Oracle, a personal executive assistant and secretary running on the homelab host. "
-        "Your working directory is /home/tm9k1. "
-        "Read /home/tm9k1/.ai/IDENTITY.md and /home/tm9k1/.ai/SOUL.md for your persona and operating instructions. "
+        f"You are Oracle, a personal executive assistant and secretary running on the host for {user_name}. "
+        f"Your working directory is {Path.home()}. "
+        f"Read {AI_DIR}/IDENTITY.md and {AI_DIR}/SOUL.md for your persona and operating instructions. "
         "COMMUNICATION & PERSONA: Act as a personal assistant/secretary. Keep your replies natural, conversational, terse, and direct. "
         "SILENT FILE MANAGEMENT: When managing files, ledgers, notes, or code, handle everything quietly in the background. "
         "NEVER list, enumerate, or cite the files you updated, modified, or touched (no file paths, no lists of 'Updated file1, file2...'). "
         "Answer the core question/status conversationally without meta-documentation or file inventories. "
-        "Your AUTHORITATIVE knowledge base is Dominion — the synced vault at /mnt/hdd/notes/Dominion/. "
-        "Use it for anything about your operator, devices, finances, people, systems, preferences, or plans. "
-        "Boot order: read CONSTITUTION.md, then CORRECTIONS.md, PLANNING-CHAMBER.md, CENSUS.md; "
-        "personal preferences and feedback are in mind/, facts about the world are in entities/. "
-        "For deeper Dominion work invoke the `dominion` skill. "
-        "For homelab how-to (service fixes, upgrades) use the operational annex at "
-        "/home/tm9k1/.ai/knowledge/ and .ai/stars|scars — treat it as a source, not ground truth (see Dominion CORRECTIONS.md). "
-        "If /mnt/hdd is not mounted the vault is unavailable — fall back to .ai/USER.md and say so. "
-        "Do NOT hand-edit Dominion entities/ or mind/ unless explicitly acting as its steward; "
-        "your session insights are captured automatically into Dominion's review inbox. "
+        f"{vault_instructions}"
+        f"For operational runbooks use {AI_DIR}/knowledge/ and {AI_DIR}/stars|scars. "
+        "Do NOT hand-edit core knowledge files unless explicitly requested; "
+        "session insights are staged automatically into the review inbox. "
         "IMPORTANT: Always write a short text reply first before using any tools. "
         "Even if you need to check something, acknowledge the message in one line first, then do the tool work. "
-        "ATTACHMENTS & IMAGES: Files/images sent on Discord are saved to /home/tm9k1/.ai/downloads/attachments/ and can be viewed with tools. "
+        f"ATTACHMENTS & IMAGES: Files/images sent on Discord are saved to {ATTACHMENTS_DIR}/ and can be viewed with tools. "
         "When you generate or reference an image path (or use `![alt](path)`), Oracle will automatically attach the image to your Discord message."
     )
 
@@ -468,13 +487,17 @@ def _transcript_path(session_id: str) -> Optional[str]:
     if not session_id:
         return None
     # agy brain path
-    agy_path = Path(f"/home/tm9k1/.gemini/antigravity-cli/brain/{session_id}/.system_generated/logs/transcript.jsonl")
+    agy_path = Path.home() / f".gemini/antigravity-cli/brain/{session_id}/.system_generated/logs/transcript.jsonl"
     if agy_path.exists():
         return str(agy_path)
     # claude path
-    claude_path = Path(f"/home/tm9k1/.claude/projects/-home-tm9k1/{session_id}.jsonl")
+    home_slug = str(Path.home()).replace("/", "-")
+    claude_path = Path.home() / f".claude/projects/{home_slug}/{session_id}.jsonl"
     if claude_path.exists():
         return str(claude_path)
+    tmp_path = Path(f"/tmp/claude-{os.getuid()}/{home_slug}/{session_id}.jsonl")
+    if tmp_path.exists():
+        return str(tmp_path)
     return None
 
 def _task_mtimes(session_id: str) -> dict:
@@ -482,13 +505,14 @@ def _task_mtimes(session_id: str) -> dict:
         return {}
     mtimes = {}
     # agy tasks
-    agy_task_dir = Path(f"/home/tm9k1/.gemini/antigravity-cli/brain/{session_id}/.system_generated/tasks")
+    agy_task_dir = Path.home() / f".gemini/antigravity-cli/brain/{session_id}/.system_generated/tasks"
     if agy_task_dir.exists():
         for f in agy_task_dir.glob("*.log"):
             if f.exists():
                 mtimes[str(f)] = f.stat().st_mtime
     # claude tasks
-    claude_task_dir = Path(f"/tmp/claude-1000/-home-tm9k1/{session_id}/tasks")
+    home_slug = str(Path.home()).replace("/", "-")
+    claude_task_dir = Path(f"/tmp/claude-{os.getuid()}/{home_slug}/{session_id}/tasks")
     if claude_task_dir.exists():
         for f in claude_task_dir.glob("*.output"):
             if f.exists():
@@ -958,15 +982,16 @@ EXTRACTION_IDLE_SECS = float(KB_CFG.get("extraction_idle_seconds", 300))
 def _get_transcript_path(session_id: str) -> Optional[Path]:
     if not session_id:
         return None
-    agy_path = Path(f"/home/tm9k1/.gemini/antigravity-cli/brain/{session_id}/.system_generated/logs/transcript.jsonl")
+    agy_path = Path.home() / f".gemini/antigravity-cli/brain/{session_id}/.system_generated/logs/transcript.jsonl"
     if agy_path.exists():
         return agy_path
-    claude_path = Path(f"/tmp/claude-1000/-home-tm9k1/{session_id}.jsonl")
+    home_slug = str(Path.home()).replace("/", "-")
+    tmp_path = Path(f"/tmp/claude-{os.getuid()}/{home_slug}/{session_id}.jsonl")
+    if tmp_path.exists():
+        return tmp_path
+    claude_path = Path.home() / f".claude/projects/{home_slug}/{session_id}.jsonl"
     if claude_path.exists():
         return claude_path
-    claude_path2 = Path(f"/home/tm9k1/.claude/projects/-home-tm9k1/{session_id}.jsonl")
-    if claude_path2.exists():
-        return claude_path2
     return None
 
 
@@ -1178,7 +1203,7 @@ async def _dispatch(channel, user_text: str, session_id: Optional[str], channel_
     # Detect newly generated images in artifact dir during this turn
     existing_canon = {str(p.resolve()) for p in image_paths}
     if data.session_id:
-        brain_dir = Path(f"/home/tm9k1/.gemini/antigravity-cli/brain/{data.session_id}")
+        brain_dir = Path.home() / f".gemini/antigravity-cli/brain/{data.session_id}"
         if brain_dir.is_dir():
             for img_file in brain_dir.glob("*"):
                 if img_file.suffix.lower() in IMAGE_EXTENSIONS and img_file.is_file():

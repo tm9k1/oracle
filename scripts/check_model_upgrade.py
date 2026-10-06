@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-AI_DIR = Path("/home/tm9k1/.ai")
+AI_DIR = Path(os.environ.get("ORACLE_DIR") or Path(__file__).resolve().parent.parent)
 CONFIG_PATH = AI_DIR / "config.json"
 LOG_PATH = AI_DIR / "logs" / "model_upgrade.log"
 CHANGES_PATH = AI_DIR / "last_changes.txt"
@@ -45,7 +45,7 @@ def find_agy(custom_path: Optional[str] = None) -> str:
     if custom_path and Path(custom_path).exists():
         return custom_path
     candidates = [
-        "/home/tm9k1/.local/bin/agy",
+        str(Path.home() / ".local/bin/agy"),
         "/usr/local/bin/agy",
         "/usr/bin/agy",
     ]

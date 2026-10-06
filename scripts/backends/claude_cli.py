@@ -17,15 +17,16 @@ log = logging.getLogger("oracle.backend.claude_cli")
 
 DEFAULT_MODEL = "sonnet"
 
-_HOME_BUCKET = Path("/home/tm9k1/.claude/projects/-home-tm9k1")
-_VSCODE_BUCKET = Path("/home/tm9k1/.claude/projects/-home-tm9k1-docker-compose-files")
+_HOME_SLUG = str(Path.home()).replace("/", "-")
+_HOME_BUCKET = Path.home() / f".claude/projects/{_HOME_SLUG}"
+_VSCODE_BUCKET = Path.home() / f".claude/projects/{_HOME_SLUG}-docker-compose-files"
 
 
 def _find_claude(custom_path: Optional[str] = None) -> str:
     if custom_path and Path(custom_path).exists():
         return custom_path
     candidates = [
-        "/home/tm9k1/.local/bin/claude",
+        str(Path.home() / ".local/bin/claude"),
         "/usr/local/bin/claude",
         "/usr/bin/claude",
     ]
@@ -33,7 +34,7 @@ def _find_claude(custom_path: Optional[str] = None) -> str:
         if Path(p).exists():
             return p
     exts = sorted(
-        Path("/home/tm9k1/.vscode-server/extensions").glob(
+        (Path.home() / ".vscode-server/extensions").glob(
             "anthropic.claude-code-*/resources/native-binary/claude"
         )
     )
@@ -52,7 +53,7 @@ class ClaudeCliBackend(BaseAIBackend):
         self,
         model: Optional[str] = None,
         claude_path: Optional[str] = None,
-        working_dir: str = "/home/tm9k1",
+        working_dir: Optional[str] = None,
         timeout_seconds: int = 1500,
         edit_interval: float = 5.0,
         **kwargs: Any,

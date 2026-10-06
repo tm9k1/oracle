@@ -31,6 +31,9 @@
   },
   "kb": {
     "base_dir": "/home/tm9k1/.ai",
+    "vault_path": "/mnt/hdd/notes/Dominion",
+    "vault_name": "Dominion",
+    "inbox_rel_path": "mind/inbox",
     "max_context_chars": 20000,
     "max_retrieval_results": 8,
     "history_turns": 20,
