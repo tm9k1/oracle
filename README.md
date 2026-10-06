@@ -131,6 +131,10 @@ The wizard prompts for:
 
 ### 2. Scripted / Headless Setup
 ```bash
+# Full auto-detection
+python3 scripts/onboard.py --auto
+
+# Or with specific parameters:
 python3 scripts/onboard.py \
   --non-interactive \
   --user-name "Alice" \
@@ -139,6 +143,20 @@ python3 scripts/onboard.py \
   --backend agy \
   --discord-token "YOUR_DISCORD_BOT_TOKEN" \
   --install-service
+```
+
+### 3. 🤖 AI-Agent Turnkey Setup (Claude Code, Antigravity, Cursor, Devin)
+
+If you are using an AI coding assistant, simply ask your agent:
+> *"Set up Oracle for me"*
+
+The agent will read [`AGENTS.md`](file:///home/tm9k1/.ai/AGENTS.md) or [`CLAUDE.md`](file:///home/tm9k1/.ai/CLAUDE.md), run system diagnostics via `python scripts/onboard.py --doctor`, link your knowledge base, and start the service.
+
+You can also inspect system health at any time:
+```bash
+python3 scripts/onboard.py --doctor
+# Machine-readable JSON output:
+python3 scripts/onboard.py --doctor --json
 ```
 
 ---

@@ -103,6 +103,35 @@ class TestOnboard(unittest.TestCase):
         self.assertIn("oracle_bot.py", bat_txt)
         self.assertIn("oracle_bot.py", ps1_txt)
 
+    def test_run_doctor_json(self):
+        # Configure mock env and config
+        setup_env_credentials(token="mock_discord_token", interactive=False)
+        vault_dir = self.temp_path / "mock_vault"
+        vault_dir.mkdir(parents=True, exist_ok=True)
+        (vault_dir / "note.md").write_text("# Note", encoding="utf-8")
+        update_config_file(
+            vault_path=vault_dir,
+            vault_name="Mock Vault",
+            backend="agy",
+            model="gemini-3.8-flash-high",
+            user_name="Tester",
+        )
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            ret = onboard.run_doctor(json_output=True)
+        out = json.loads(buf.getvalue())
+        self.assertIn("python", out)
+        self.assertIn("dependencies", out)
+        self.assertIn("backends", out)
+        self.assertEqual(out["kb"]["vault_name"], "Mock Vault")
+        self.assertEqual(out["kb"]["markdown_count"], 1)
+
+    def test_find_common_vaults(self):
+        vaults = onboard.find_common_vaults()
+        self.assertIsInstance(vaults, list)
+
 
 if __name__ == "__main__":
     unittest.main()

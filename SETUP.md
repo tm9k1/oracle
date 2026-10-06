@@ -18,7 +18,7 @@ source .venv/bin/activate
 pip install -r scripts/requirements.txt
 ```
 
-> **Tip:** You can run `python3 scripts/onboard.py` to automatically configure your knowledge base, credentials, and systemd service in one guided step. See [ONBOARDING.md](file:///home/tm9k1/.ai/ONBOARDING.md) for details.
+> **Tip:** You can ask any AI assistant (Claude Code, Antigravity, Cursor, Devin) to **"Set up Oracle for me"** — the repository includes [`AGENTS.md`](file:///home/tm9k1/.ai/AGENTS.md) and [`CLAUDE.md`](file:///home/tm9k1/.ai/CLAUDE.md) designed for autonomous agents. Or run `python3 scripts/onboard.py --auto` directly. See [ONBOARDING.md](file:///home/tm9k1/.ai/ONBOARDING.md) for details.
 
 ---
 

@@ -56,8 +56,24 @@ The wizard will interactively:
 
 ## 🤖 Non-Interactive / Scripted Onboarding
 
-For headless servers, Docker containers, or automated scripts:
+For AI assistants, headless servers, Docker containers, or automated scripts:
 
+### Zero-Click Auto Setup
+```bash
+# Automatically detects username, installed AI backend, and existing knowledge bases:
+python3 scripts/onboard.py --auto
+```
+
+### Health Diagnostics (`--doctor`)
+Assess your environment, missing dependencies, backend detection, and service status:
+```bash
+python3 scripts/onboard.py --doctor
+
+# Machine-readable JSON for AI agents or CI/CD pipelines:
+python3 scripts/onboard.py --doctor --json
+```
+
+### Custom Headless Configuration
 ```bash
 # Example: Link an existing Obsidian vault
 python3 scripts/onboard.py \
@@ -80,6 +96,23 @@ python3 scripts/onboard.py \
   --discord-token "YOUR_DISCORD_BOT_TOKEN" \
   --install-service
 ```
+
+---
+
+## 🧠 Setting Up Oracle via an AI Agent
+
+If you are using an AI coding assistant (like Claude Code, Antigravity, Cursor, Devin, or Codex), you do not need to configure anything manually. The repository is pre-equipped with [`AGENTS.md`](file:///home/tm9k1/.ai/AGENTS.md) and [`CLAUDE.md`](file:///home/tm9k1/.ai/CLAUDE.md).
+
+Simply give your agent this prompt:
+> **"Set up Oracle for me"**
+
+The AI will:
+1. Run `python scripts/onboard.py --doctor --json` to diagnose your system.
+2. Install virtual environment and dependencies.
+3. Link your existing notes vault or scaffold a starter knowledge base using `--auto`.
+4. Prompt you for your Discord token (or keep your `.env` settings).
+5. Verify tests with `python -m unittest discover -s scripts/tests`.
+6. Start or configure the background service.
 
 ---
 

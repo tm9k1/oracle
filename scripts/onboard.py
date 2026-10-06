@@ -78,6 +78,26 @@ def init_starter_kb(target_dir: Path) -> None:
     print(f"✓ Initialized starter knowledge base in: {target_dir}")
 
 
+def find_common_vaults() -> list[tuple[Path, str]]:
+    """Scan common paths for personal knowledge bases or Obsidian vaults."""
+    candidates = [
+        (Path("/mnt/hdd/notes/Dominion"), "Dominion"),
+        (Path.home() / "notes", "Notes"),
+        (Path.home() / "Obsidian", "Obsidian"),
+        (Path.home() / "Documents" / "Obsidian", "Obsidian"),
+        (Path.home() / "Documents" / "notes", "Notes"),
+        (Path.home() / "vault", "Vault"),
+        (Path.home() / "second_brain", "Second Brain"),
+    ]
+    found = []
+    for p, name in candidates:
+        if p.exists() and p.is_dir():
+            md_files = list(p.glob("*.md")) + list(p.glob("*/*.md"))
+            if md_files:
+                found.append((p.resolve(), name))
+    return found
+
+
 def setup_knowledge_base(
     vault_path_str: Optional[str] = None,
     vault_name: Optional[str] = None,
@@ -86,6 +106,26 @@ def setup_knowledge_base(
 ) -> tuple[Path, str]:
     """Configure or initialize the knowledge base directory."""
     default_vault = str(Path.home() / "notes")
+
+    # If not specified, look for existing configured vault or common vaults
+    if not vault_path_str:
+        if CONFIG_FILE.exists():
+            try:
+                cfg_data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                existing_vp = cfg_data.get("kb", {}).get("vault_path")
+                if existing_vp and Path(existing_vp).exists():
+                    default_vault = existing_vp
+                    if not vault_name:
+                        vault_name = cfg_data.get("kb", {}).get("vault_name")
+            except Exception:
+                pass
+        if default_vault == str(Path.home() / "notes"):
+            detected = find_common_vaults()
+            if detected:
+                default_vault = str(detected[0][0])
+                if not vault_name:
+                    vault_name = detected[0][1]
+
     if not vault_path_str and interactive:
         print("\n--- 1. Knowledge Base Configuration ---")
         print("Oracle can connect to any Markdown folder, Obsidian vault, Logseq directory, or Dominion.")
@@ -97,7 +137,7 @@ def setup_knowledge_base(
     vault_path = Path(os.path.expanduser(vault_path_str)).resolve()
 
     if not vault_path.exists():
-        if init_template or (interactive and prompt_yes_no(f"Path '{vault_path}' does not exist. Create with starter template?")):
+        if init_template or not interactive or prompt_yes_no(f"Path '{vault_path}' does not exist. Create with starter template?"):
             init_starter_kb(vault_path)
         else:
             vault_path.mkdir(parents=True, exist_ok=True)
@@ -130,15 +170,28 @@ def setup_backend(
     agy_found = bool(find_binary("agy"))
     claude_found = bool(find_binary("claude"))
 
+    cfg_backend = None
+    cfg_model = None
+    if CONFIG_FILE.exists():
+        try:
+            cfg_data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            cfg_backend = cfg_data.get("ai", {}).get("backend")
+            cfg_model = cfg_data.get("ai", {}).get("model")
+        except Exception:
+            pass
+
     if not chosen_backend and interactive:
         print("\n--- 2. AI Inference Backend ---")
         print(f" - [1] agy (Google Antigravity CLI / Gemini) - {'detected' if agy_found else 'not detected in PATH'}")
         print(f" - [2] claude_cli (Anthropic Claude Code CLI) - {'detected' if claude_found else 'not detected in PATH'}")
-        def_choice = "1" if agy_found else ("2" if claude_found else "1")
+        if cfg_backend in ("agy", "claude_cli"):
+            def_choice = "1" if cfg_backend == "agy" else "2"
+        else:
+            def_choice = "1" if agy_found else ("2" if claude_found else "1")
         sel = prompt_user("Select backend [1/2]", default=def_choice)
         chosen_backend = "agy" if sel == "1" else "claude_cli"
     elif not chosen_backend:
-        chosen_backend = "agy" if agy_found else "claude_cli"
+        chosen_backend = cfg_backend or ("agy" if agy_found else "claude_cli")
 
     if chosen_backend == "agy":
         default_model = "gemini-3.8-flash-high"
@@ -146,7 +199,7 @@ def setup_backend(
         default_model = "claude-sonnet-4-6"
 
     if not chosen_model:
-        chosen_model = default_model
+        chosen_model = cfg_model or default_model
 
     return chosen_backend, chosen_model
 
@@ -290,6 +343,7 @@ def generate_systemd_service(install: bool = False, interactive: bool = True) ->
     if sys.platform == "win32":
         return None
 
+    py_bin = f"{AI_DIR}/.venv/bin/python" if (AI_DIR / ".venv" / "bin" / "python").exists() else sys.executable
     service_content = f"""[Unit]
 Description=Oracle Discord Bot (modular AI backend)
 After=network-online.target
@@ -300,7 +354,7 @@ Type=simple
 WorkingDirectory={AI_DIR}
 EnvironmentFile=-{AI_DIR}/.env
 Environment="PATH={Path.home()}/.local/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart={AI_DIR}/.venv/bin/python {AI_DIR}/scripts/oracle_bot.py
+ExecStart={py_bin} {AI_DIR}/scripts/oracle_bot.py
 Restart=always
 RestartSec=10
 StandardOutput=append:{AI_DIR}/logs/oracle_bot.log
@@ -328,6 +382,169 @@ WantedBy=default.target
     return None
 
 
+def run_doctor(json_output: bool = False) -> int:
+    """Check system health, dependencies, and configuration."""
+    status: Dict[str, Any] = {
+        "ok": True,
+        "python": {
+            "version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            "ok": sys.version_info >= (3, 10),
+            "venv": sys.prefix != sys.base_prefix,
+        },
+        "dependencies": {},
+        "backends": {},
+        "env": {},
+        "kb": {},
+        "service": {},
+        "issues": [],
+    }
+
+    if not status["python"]["ok"]:
+        status["ok"] = False
+        status["issues"].append("Python 3.10+ required")
+
+    for pkg in ["discord", "anthropic"]:
+        try:
+            m = __import__(pkg)
+            ver = getattr(m, "__version__", "installed")
+            status["dependencies"][pkg] = {"installed": True, "version": ver}
+        except ImportError:
+            status["dependencies"][pkg] = {"installed": False}
+            status["ok"] = False
+            status["issues"].append(f"Missing dependency: {pkg} (run: pip install -r scripts/requirements.txt)")
+
+    agy_bin = find_binary("agy")
+    claude_bin = find_binary("claude")
+    status["backends"]["agy"] = {"found": bool(agy_bin), "path": agy_bin}
+    status["backends"]["claude"] = {"found": bool(claude_bin), "path": claude_bin}
+
+    env_exists = ENV_FILE.exists()
+    has_token = False
+    has_anthropic_key = False
+    if env_exists:
+        try:
+            for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+                if line.startswith("DISCORD_TOKEN="):
+                    val = line.split("=", 1)[1].strip()
+                    if val and "YOUR_DISCORD_BOT_TOKEN_HERE" not in val and val != "your_bot_token_here":
+                        has_token = True
+                if line.startswith("ANTHROPIC_API_KEY="):
+                    val = line.split("=", 1)[1].strip()
+                    if val and "sk-ant" in val:
+                        has_anthropic_key = True
+        except Exception:
+            pass
+
+    status["env"]["file_exists"] = env_exists
+    status["env"]["discord_token_configured"] = has_token
+    status["env"]["anthropic_key_configured"] = has_anthropic_key
+
+    if not has_token:
+        status["ok"] = False
+        status["issues"].append("DISCORD_TOKEN not configured in .env")
+
+    if not agy_bin and not claude_bin and not has_anthropic_key:
+        status["ok"] = False
+        status["issues"].append("No AI inference backend found (install 'agy' or 'claude', or set ANTHROPIC_API_KEY in .env)")
+
+    cfg_exists = CONFIG_FILE.exists()
+    status["kb"]["config_exists"] = cfg_exists
+    if cfg_exists:
+        try:
+            cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            vpath_str = cfg.get("kb", {}).get("vault_path")
+            vname = cfg.get("kb", {}).get("vault_name", "Unknown")
+            status["kb"]["vault_name"] = vname
+            status["kb"]["vault_path"] = vpath_str
+            if vpath_str:
+                vp = Path(vpath_str)
+                exists = vp.exists()
+                status["kb"]["exists"] = exists
+                if exists:
+                    md_count = len(list(vp.rglob("*.md")))
+                    status["kb"]["markdown_count"] = md_count
+                else:
+                    status["ok"] = False
+                    status["issues"].append(f"Configured vault path does not exist: {vpath_str}")
+        except Exception as e:
+            status["kb"]["error"] = str(e)
+            status["ok"] = False
+            status["issues"].append(f"Invalid config.json: {e}")
+    else:
+        status["ok"] = False
+        status["issues"].append("config.json not found (run: python scripts/onboard.py)")
+
+    if sys.platform == "win32":
+        status["service"]["bat_script"] = (AI_DIR / "run_oracle.bat").exists()
+        status["service"]["ps1_script"] = (AI_DIR / "start_oracle.ps1").exists()
+    else:
+        unit = Path.home() / ".config" / "systemd" / "user" / "oracle-discord.service"
+        status["service"]["systemd_unit_installed"] = unit.exists()
+        is_active = False
+        if unit.exists():
+            try:
+                res = subprocess.run(["systemctl", "--user", "is-active", "oracle-discord"], capture_output=True, text=True)
+                is_active = (res.stdout.strip() == "active")
+            except Exception:
+                pass
+        status["service"]["systemd_unit_active"] = is_active
+
+    if json_output:
+        print(json.dumps(status, indent=2))
+        return 0 if status["ok"] else 1
+
+    print("=" * 60)
+    print("           🩺 Oracle Doctor Health Diagnostics")
+    print("=" * 60)
+
+    py_ok = "✓" if status["python"]["ok"] else "✗"
+    print(f"[{py_ok}] Python Version:    {status['python']['version']} (venv: {'active' if status['python']['venv'] else 'inactive'})")
+
+    dep_ok = "✓" if all(d.get("installed") for d in status["dependencies"].values()) else "✗"
+    dep_str = ", ".join(f"{k} ({v.get('version', 'missing')})" if v.get("installed") else f"{k} (MISSING)" for k, v in status["dependencies"].items())
+    print(f"[{dep_ok}] Dependencies:      {dep_str}")
+
+    backend_ok = "✓" if (agy_bin or claude_bin or has_anthropic_key) else "✗"
+    b_found = []
+    if agy_bin:
+        b_found.append(f"agy ({agy_bin})")
+    if claude_bin:
+        b_found.append(f"claude ({claude_bin})")
+    if has_anthropic_key:
+        b_found.append("Anthropic API Key (.env)")
+    print(f"[{backend_ok}] AI Backend:        {', '.join(b_found) if b_found else 'NONE DETECTED'}")
+
+    tok_ok = "✓" if has_token else "✗"
+    print(f"[{tok_ok}] Discord Token:     {'Configured in .env' if has_token else 'NOT CONFIGURED (.env)'}")
+
+    kb_ok = "✓" if status["kb"].get("exists") else "✗"
+    kb_info = f"{status['kb'].get('vault_name', 'None')} ({status['kb'].get('vault_path', 'Not configured')}"
+    if status["kb"].get("markdown_count") is not None:
+        kb_info += f" · {status['kb']['markdown_count']} notes)"
+    else:
+        kb_info += ")"
+    print(f"[{kb_ok}] Knowledge Base:    {kb_info}")
+
+    if sys.platform == "win32":
+        s_ok = "✓" if (status["service"].get("bat_script") and status["service"].get("ps1_script")) else "✗"
+        print(f"[{s_ok}] Launchers:         run_oracle.bat, start_oracle.ps1")
+    else:
+        s_ok = "✓" if status["service"].get("systemd_unit_installed") else "○"
+        s_state = "active" if status["service"].get("systemd_unit_active") else ("installed" if status["service"].get("systemd_unit_installed") else "not installed")
+        print(f"[{s_ok}] Systemd Service:   oracle-discord.service ({s_state})")
+
+    print("-" * 60)
+    if status["ok"]:
+        print("Status: All systems configured and operational!")
+    else:
+        print("Issues found:")
+        for issue in status["issues"]:
+            print(f"  • {issue}")
+    print("=" * 60)
+
+    return 0 if status["ok"] else 1
+
+
 def run_tests() -> bool:
     """Run test suite to verify installation integrity."""
     print("\n--- Running Test Suite ---")
@@ -351,6 +568,9 @@ def run_tests() -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Oracle Knowledge Base Onboarding Wizard")
+    parser.add_argument("--doctor", action="store_true", help="Inspect environment and print health diagnostics")
+    parser.add_argument("--json", action="store_true", help="Output doctor results in JSON format")
+    parser.add_argument("--auto", action="store_true", help="Auto-detect all settings non-interactively")
     parser.add_argument("--non-interactive", action="store_true", help="Run without prompts using defaults/flags")
     parser.add_argument("--user-name", help="Operator name (e.g. Piyush, Alice)")
     parser.add_argument("--bot-name", default="Oracle", help="Discord bot name (default: Oracle)")
@@ -363,6 +583,15 @@ def main():
     parser.add_argument("--install-service", action="store_true", help="Install systemd user service")
     parser.add_argument("--skip-tests", action="store_true", help="Skip running unit tests at the end")
     args = parser.parse_args()
+
+    if args.doctor:
+        sys.exit(run_doctor(json_output=args.json))
+
+    if args.auto:
+        args.non_interactive = True
+        args.init_starter_kb = True
+        if sys.platform != "win32":
+            args.install_service = True
 
     interactive = not args.non_interactive
 
